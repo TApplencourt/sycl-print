@@ -223,25 +223,77 @@ int main() {
   P("{:A}\n", 0.0 / 0.0);
 
   // ============================================================
-  // 16. Multiple args
+  // 16. Multiple args — same type
   // ============================================================
   for (int _i = 0; _i < N_ITER; _i++) {
-    int a = rand_int();
-    int b = rand_int();
+    int a = rand_int(); int b = rand_int();
     P("{} + {} = {}\n", a, b, a + b);
-  }
-  for (int _i = 0; _i < N_ITER; _i++) {
-    int x = rand_int();
-    double f = rand_double();
-    P("i={:+d} f={:.4f}\n", x, f);
   }
 
   // ============================================================
-  // 17. Escaped braces with values
+  // 17. Multiple args — mixed types
+  // ============================================================
+  for (int _i = 0; _i < N_ITER; _i++) {
+    int i = rand_int();
+    double f = rand_double();
+    P("i={:+d} f={:.4f}\n", i, f);
+  }
+  for (int _i = 0; _i < N_ITER; _i++) {
+    P("Hello {}, coucou {}\n", "world", rand_int());
+  }
+  for (int _i = 0; _i < N_ITER; _i++) {
+    int i = rand_int();
+    double d = rand_double();
+    char c = rand_char();
+    bool b = (rng() & 1) != 0;
+    P("int={} dbl={:.3f} chr={} bool={}\n", i, d, c, b);
+  }
+  for (int _i = 0; _i < N_ITER; _i++) {
+    unsigned u = rand_uint();
+    int64_t big = rand_i64();
+    P("u={:#x} big={:d}\n", u, big);
+  }
+  for (int _i = 0; _i < N_ITER; _i++) {
+    int a = rand_int();
+    double b = rand_double();
+    char c = rand_char();
+    P("{:*>15d} | {:<+15.2f} | {:^5c}\n", a, b, c);
+  }
+  for (int _i = 0; _i < N_ITER; _i++) {
+    int v = rand_int();
+    P("hex={:#010x} bin={:#020b} dec={:+d}\n", v, v, v);
+  }
+  for (int _i = 0; _i < N_ITER; _i++) {
+    bool b1 = (rng() & 1) != 0;
+    bool b2 = (rng() & 1) != 0;
+    int i = rand_int();
+    P("{} and {} => {:d}\n", b1, b2, i);
+  }
+  for (int _i = 0; _i < N_ITER; _i++) {
+    double d = rand_double();
+    int i = rand_int();
+    uint64_t u = rand_u64();
+    char c = rand_char();
+    bool b = (rng() & 1) != 0;
+    P("{:.2e} {} {:x} {} {}\n", d, i, u, c, b);
+  }
+  for (int _i = 0; _i < N_ITER; _i++) {
+    P("{} {:g} {} {} {} {} {}\n",
+      rand_int(), rand_double(), rand_char(),
+      (rng() & 1) != 0, rand_uint(), rand_i64(), "lit");
+  }
+
+  // ============================================================
+  // 18. Escaped braces with mixed types
   // ============================================================
   for (int _i = 0; _i < N_ITER; _i++) {
     int v = rand_int();
     P("{{{:d}}}\n", v);
+  }
+  for (int _i = 0; _i < N_ITER; _i++) {
+    double d = rand_double();
+    int i = rand_int();
+    P("result={{{}}} value={{{:+.2f}}}\n", i, d);
   }
 
   return 0;

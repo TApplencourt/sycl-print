@@ -684,6 +684,19 @@ inline void print_arg_with_spec(T arg) {
   } else if constexpr (needs_buf && is_int_format(etype)) {
     // Buffer path — full integer formatting
     format_int_buf<Spec, etype>(arg);
+  } else if constexpr (needs_buf && etype == 'c') {
+    // Buffer path — char with fill/center
+    fmt_buf content;
+    content.push(static_cast<char>(arg));
+    apply_padding_and_print(content, Spec.fill ? Spec.fill : ' ',
+                            Spec.align ? Spec.align : '>', Spec.width);
+  } else if constexpr (needs_buf && etype == 's') {
+    // Buffer path — string with fill/center
+    fmt_buf content;
+    const char *s = arg;
+    while (*s) content.push(*s++);
+    apply_padding_and_print(content, Spec.fill ? Spec.fill : ' ',
+                            Spec.align ? Spec.align : '<', Spec.width);
   } else if constexpr (needs_buf && is_float_format(etype)) {
     // Multi-printf path — fill around printf output
     print_float_with_fill<Spec, etype>(arg);
