@@ -84,14 +84,19 @@ consteval placeholder_info find_placeholder() {
         }
       }
 
-      // Parse optional :spec
+      // Parse optional :spec — skip nested {} for dynamic width/prec
       bool has_spec = false;
       size_t spec_beg = j;
       if (j < len && Fmt[j] == ':') {
         has_spec = true;
         spec_beg = j + 1;
         j++;
-        while (j < len && Fmt[j] != '}') j++;
+        int depth = 0;
+        while (j < len) {
+          if (Fmt[j] == '{') depth++;
+          else if (Fmt[j] == '}') { if (depth == 0) break; depth--; }
+          j++;
+        }
       }
       // j now points at '}' (or end)
       size_t close = j;
@@ -267,12 +272,37 @@ struct format_spec {
   int width = 0;
   int precision = -1;
   char type = '\0';
+  int width_arg = -1;  // >=0: dynamic width from arg N, -1: static
+  int prec_arg = -1;   // >=0: dynamic precision from arg N, -1: static
+  int dyn_count = 0;   // number of auto-indexed dynamic args consumed
 };
 
-template <fixed_string Fmt, size_t Begin, size_t End>
+// Parse a dynamic arg reference {N} or {} inside a spec.
+// Returns the arg index (or auto_idx if {}), advances i past '}'.
+// Sets auto_idx to -1 after first manual use.
+consteval int parse_dynamic_arg(const char *data, size_t len, size_t &i,
+                                int &auto_idx) {
+  // i points at '{'
+  i++; // skip '{'
+  int idx;
+  if (i < len && data[i] >= '0' && data[i] <= '9') {
+    idx = 0;
+    while (i < len && data[i] >= '0' && data[i] <= '9') {
+      idx = idx * 10 + (data[i] - '0');
+      i++;
+    }
+  } else {
+    idx = auto_idx >= 0 ? auto_idx++ : 0;
+  }
+  if (i < len && data[i] == '}') i++; // skip '}'
+  return idx;
+}
+
+template <fixed_string Fmt, size_t Begin, size_t End, int DynAutoStart = -1>
 consteval format_spec parse_spec() {
   format_spec s{};
   size_t i = Begin;
+  int dyn_auto = DynAutoStart; // auto-index counter for dynamic args
 
   // [[fill]align]
   if (i + 1 < End && is_align_char(Fmt[i + 1])) {
@@ -302,19 +332,28 @@ consteval format_spec parse_spec() {
     i++;
   }
 
-  // [width]
-  while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
-    s.width = s.width * 10 + (Fmt[i] - '0');
-    i++;
+  // [width] — static digits or dynamic {N}/{}
+  if (i < End && Fmt[i] == '{') {
+    s.width_arg = parse_dynamic_arg(Fmt.data, End, i, dyn_auto);
+  } else {
+    while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
+      s.width = s.width * 10 + (Fmt[i] - '0');
+      i++;
+    }
   }
 
-  // [.precision]
+  // [.precision] — static digits or dynamic {N}/{}
   if (i < End && Fmt[i] == '.') {
     i++;
     s.precision = 0;
-    while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
-      s.precision = s.precision * 10 + (Fmt[i] - '0');
-      i++;
+    if (i < End && Fmt[i] == '{') {
+      s.prec_arg = parse_dynamic_arg(Fmt.data, End, i, dyn_auto);
+      s.precision = -1; // will be resolved at runtime
+    } else {
+      while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
+        s.precision = s.precision * 10 + (Fmt[i] - '0');
+        i++;
+      }
     }
   }
 
@@ -322,6 +361,11 @@ consteval format_spec parse_spec() {
   if (i < End && is_type_char(Fmt[i])) {
     s.type = Fmt[i];
   }
+
+  // Count auto dynamic args consumed
+  s.dyn_count = (dyn_auto >= 0 && DynAutoStart >= 0)
+                    ? (dyn_auto - DynAutoStart)
+                    : 0;
 
   return s;
 }
@@ -405,6 +449,26 @@ inline void emit_printf_with_arg_impl(T arg, std::index_sequence<Is...>) {
 template <printf_fmt_buf PF, typename T>
 inline void emit_printf_with_arg(T arg) {
   emit_printf_with_arg_impl<PF>(arg, std::make_index_sequence<PF.len>{});
+}
+
+// Dispatch float with runtime precision — generates printf format strings
+// for precisions 0..20 at compile time, selects at runtime.
+template <format_spec Spec, char EffType, int N = 0>
+inline void dispatch_float_prec(double val, int prec) {
+  if (prec == N) {
+    constexpr format_spec resolved = {
+        '\0', '\0', Spec.sign, Spec.alt, false, 0, N, Spec.type, -1, -1, 0};
+    constexpr auto pfmt = build_printf_fmt<resolved, EffType, false>();
+    emit_printf_with_arg<pfmt>(val);
+  } else if constexpr (N < 20) {
+    dispatch_float_prec<Spec, EffType, N + 1>(val, prec);
+  } else {
+    // Cap at 20
+    constexpr format_spec resolved = {
+        '\0', '\0', Spec.sign, Spec.alt, false, 0, 20, Spec.type, -1, -1, 0};
+    constexpr auto pfmt = build_printf_fmt<resolved, EffType, false>();
+    emit_printf_with_arg<pfmt>(val);
+  }
 }
 
 // ============================================================
@@ -761,19 +825,129 @@ inline void print_arg_with_spec(T arg) {
   }
 }
 
+// Dynamic width/precision: SYCL printf doesn't support %*d/%.*f,
+// so we use buffer path for ints and precision dispatch for floats.
+template <format_spec Spec, typename T>
+inline void print_arg_with_spec_dynamic(T arg, int dyn_w, int dyn_p) {
+  using U = std::remove_cv_t<std::decay_t<T>>;
+
+  // Bool
+  if constexpr (std::is_same_v<U, bool> &&
+                (Spec.type == '\0' || Spec.type == 's')) {
+    fmt_buf content;
+    if (arg) { content.push('t'); content.push('r'); content.push('u'); content.push('e'); }
+    else { content.push('f'); content.push('a'); content.push('l'); content.push('s'); content.push('e'); }
+    apply_padding_and_print(content, Spec.fill ? Spec.fill : ' ',
+                            Spec.align ? Spec.align : '>', dyn_w);
+    return;
+  }
+
+  constexpr char etype = effective_type<U, Spec.type>();
+
+  if constexpr (is_int_format(etype)) {
+    // Buffer path: format int to buffer, then pad with runtime width
+    using Uns = std::conditional_t<(sizeof(U) <= 4), unsigned, unsigned long long>;
+    constexpr int base = (etype == 'b' || etype == 'B') ? 2
+                       : (etype == 'o') ? 8
+                       : (etype == 'x' || etype == 'X') ? 16 : 10;
+    constexpr bool upper = (etype == 'X' || etype == 'B');
+    bool neg = false;
+    Uns uval;
+    if constexpr (std::is_same_v<U, bool>) uval = static_cast<Uns>(arg);
+    else if constexpr (std::is_signed_v<U>) {
+      if (arg < 0) { neg = true; uval = Uns(0) - static_cast<Uns>(arg); }
+      else uval = static_cast<Uns>(arg);
+    } else uval = static_cast<Uns>(arg);
+    char sc = neg ? '-' : (Spec.sign=='+') ? '+' : (Spec.sign==' ') ? ' ' : '\0';
+    fmt_buf content;
+    if (sc) content.push(sc);
+    if constexpr (Spec.alt) {
+      if constexpr (base == 2) { content.push('0'); content.push(upper?'B':'b'); }
+      else if constexpr (base == 16) { content.push('0'); content.push(upper?'X':'x'); }
+      else if constexpr (base == 8) { if (uval != 0) content.push('0'); }
+    }
+    fmt_buf digits;
+    uint_to_buf<base, upper>(digits, uval);
+    if (Spec.zero_pad && !Spec.fill && !Spec.align && dyn_w > content.len + digits.len)
+      content.push_n('0', dyn_w - content.len - digits.len);
+    for (int i = 0; i < digits.len; i++) content.push(digits.data[i]);
+    apply_padding_and_print(content, Spec.fill ? Spec.fill : ' ',
+                            Spec.align ? Spec.align : '>', dyn_w);
+  } else if constexpr (is_float_format(etype)) {
+    // Float: dispatch precision at compile-time (0..20), pad for width
+    double val = static_cast<double>(arg);
+    int prec = dyn_p >= 0 ? dyn_p : (Spec.precision >= 0 ? Spec.precision : 6);
+    char fill_c = Spec.fill ? Spec.fill : ' ';
+    char align_c = Spec.align ? Spec.align : '>';
+
+    // Estimate formatted width for padding
+    int inner_w = 0;
+    if constexpr (etype == 'f' || etype == 'F') {
+      int w = 0;
+      double v = val < 0 ? -val : val;
+      if (val < 0 || Spec.sign == '+' || Spec.sign == ' ') w++;
+      if (v < 1.0) w++; else { double t = v; while (t >= 1.0) { w++; t /= 10.0; } }
+      if (prec > 0 || Spec.alt) w++;
+      w += prec;
+      inner_w = w;
+    } else {
+      inner_w = dyn_w; // can't compute, skip padding
+    }
+    int pad = dyn_w > inner_w ? dyn_w - inner_w : 0;
+    if (align_c == '<') {
+      dispatch_float_prec<Spec, etype>(val, prec);
+      print_fill(fill_c, pad);
+    } else if (align_c == '^') {
+      print_fill(fill_c, pad / 2);
+      dispatch_float_prec<Spec, etype>(val, prec);
+      print_fill(fill_c, pad - pad / 2);
+    } else {
+      print_fill(fill_c, pad);
+      dispatch_float_prec<Spec, etype>(val, prec);
+    }
+  } else {
+    // Char, string — format to buffer, then pad
+    fmt_buf content;
+    if constexpr (etype == 'c') content.push(static_cast<char>(arg));
+    else if constexpr (etype == 's') {
+      const char *s = arg; while (*s) content.push(*s++);
+    } else { print_arg_default(arg); return; }
+    apply_padding_and_print(content, Spec.fill ? Spec.fill : ' ',
+                            Spec.align ? Spec.align : '>', dyn_w);
+  }
+}
+
 // ============================================================
 // print_impl — walk format string, access args by index
 // ============================================================
 
 // Helper: print one arg (selected by index) with optional spec
-template <fixed_string Fmt, placeholder_info Info, typename... Args>
+template <fixed_string Fmt, placeholder_info Info, size_t AutoIdx, typename... Args>
 inline void print_one_arg(Args... args) {
   constexpr size_t idx = Info.index >= 0 ? static_cast<size_t>(Info.index) : 0;
   auto arg = get_arg<idx>(args...);
 
   if constexpr (Info.has_spec && Info.close > Info.spec_beg) {
-    constexpr auto spec = parse_spec<Fmt, Info.spec_beg, Info.close>();
-    print_arg_with_spec<spec>(arg);
+    // DynAutoStart: dynamic args continue after the value arg
+    constexpr int dyn_start = static_cast<int>(AutoIdx) + 1;
+    constexpr auto spec = parse_spec<Fmt, Info.spec_beg, Info.close, dyn_start>();
+
+    if constexpr (spec.width_arg >= 0 || spec.prec_arg >= 0) {
+      // Dynamic width/precision — resolve from arg pack
+      int dyn_w = spec.width;
+      int dyn_p = spec.precision;
+      if constexpr (spec.width_arg >= 0) {
+        constexpr size_t wi = static_cast<size_t>(spec.width_arg);
+        dyn_w = static_cast<int>(get_arg<wi>(args...));
+      }
+      if constexpr (spec.prec_arg >= 0) {
+        constexpr size_t pi = static_cast<size_t>(spec.prec_arg);
+        dyn_p = static_cast<int>(get_arg<pi>(args...));
+      }
+      print_arg_with_spec_dynamic<spec>(arg, dyn_w, dyn_p);
+    } else {
+      print_arg_with_spec<spec>(arg);
+    }
   } else {
     print_arg_default(arg);
   }
@@ -807,10 +981,16 @@ inline void print_impl(Args... args) {
         is_auto ? static_cast<int>(AutoIdx) : info.index};
 
     // Print the selected argument
-    print_one_arg<Fmt, resolved>(args...);
+    print_one_arg<Fmt, resolved, AutoIdx>(args...);
 
-    // Recurse — advance AutoIdx only if this was auto-indexed
-    constexpr size_t next_auto = is_auto ? AutoIdx + 1 : AutoIdx;
+    // Recurse — advance AutoIdx past value + any dynamic args
+    constexpr int dyn_start = static_cast<int>(AutoIdx) + 1;
+    constexpr int dyn_used =
+        (info.has_spec && info.close > info.spec_beg)
+            ? parse_spec<Fmt, info.spec_beg, info.close, dyn_start>().dyn_count
+            : 0;
+    constexpr size_t next_auto =
+        is_auto ? AutoIdx + 1 + static_cast<size_t>(dyn_used) : AutoIdx;
     print_impl<Fmt, info.close + 1, next_auto>(args...);
   }
 }

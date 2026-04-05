@@ -233,5 +233,16 @@ int main() {
   RUN(PRINT("{0} {0} {0}\n", 7));
   RUN(PRINT("{0:.2f} {1:+d}\n", 3.14, -42));
 
+  // =================================================================
+  // 23. Dynamic width and precision
+  // =================================================================
+  RUN(PRINT("{:{}d}\n", 42, 10));                // width=10
+  RUN(PRINT("{:{}d}\n", 42, 1));                 // width=1 (smaller than content)
+  RUN(PRINT("{:.{}f}\n", 3.14159, 2));           // precision=2
+  RUN(PRINT("{:.{}f}\n", 3.14159, 0));           // precision=0
+  RUN(PRINT("{:{}.{}f}\n", 3.14, 15, 6));        // width=15, precision=6
+  RUN(PRINT("{0:{1}x}\n", 255, 10));             // positional + dynamic width
+  RUN(PRINT("{0:{1}.{2}f}\n", 3.14, 20, 4));     // positional + both dynamic
+
   return 0;
 }
