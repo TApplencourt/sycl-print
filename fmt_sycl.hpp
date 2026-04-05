@@ -377,11 +377,12 @@ inline void emit_printf_with_arg(T arg) {
 // ============================================================
 
 struct fmt_buf {
-  char data[68]{};
+  static constexpr int cap = 255;
+  char data[cap + 1]{};
   int len = 0;
-  void push(char c) { if (len < 67) data[len++] = c; }
+  void push(char c) { if (len < cap) data[len++] = c; }
   void push_n(char c, int n) {
-    for (int i = 0; i < n && len < 67; i++) data[len++] = c;
+    for (int i = 0; i < n && len < cap; i++) data[len++] = c;
   }
 };
 
@@ -530,20 +531,18 @@ inline void format_hex_float(T arg) {
 
   fmt_buf content;
 
-  // Sign
-  if (val < 0.0) { content.push('-'); val = -val; }
+  // Extract IEEE 754 bits (must do before sign check for -0.0)
+  uint64_t bits = __builtin_bit_cast(uint64_t, val);
+  bool negative = (bits >> 63) != 0;
+
+  // Sign (use sign bit, not val < 0, to catch -0.0)
+  if (negative) { content.push('-'); val = -val; bits &= 0x7FFFFFFFFFFFFFFFULL; }
   else if (Spec.sign == '+') content.push('+');
   else if (Spec.sign == ' ') content.push(' ');
 
-  // Prefix only with #
-  if constexpr (Spec.alt) {
-    content.push('0');
-    content.push(upper ? 'X' : 'x');
-  }
-
-  // Extract IEEE 754 bits
-  uint64_t bits = __builtin_bit_cast(uint64_t, val);
-  int biased_exp = static_cast<int>((bits >> 52) & 0x7FF);
+  // std::format {:a} never adds 0x prefix (unlike printf)
+  // # only forces the decimal point (handled below)
+  int biased_exp = static_cast<int>((bits >> 52) & 0x7FF); // sign already cleared
   uint64_t mantissa = bits & 0x000FFFFFFFFFFFFFULL;
 
   // Inf / NaN
@@ -576,13 +575,15 @@ inline void format_hex_float(T arg) {
   }
 
   // Fractional mantissa (52 bits = 13 hex digits, trim trailing zeros)
-  if (mantissa != 0) {
+  if (mantissa != 0 || Spec.alt) {
     content.push('.');
-    int last_nz = -1;
-    for (int i = 0; i < 13; i++)
-      if (((mantissa >> (48 - i * 4)) & 0xF) != 0) last_nz = i;
-    for (int i = 0; i <= last_nz; i++)
-      content.push(hex_digit(static_cast<int>((mantissa >> (48 - i * 4)) & 0xF), upper));
+    if (mantissa != 0) {
+      int last_nz = -1;
+      for (int i = 0; i < 13; i++)
+        if (((mantissa >> (48 - i * 4)) & 0xF) != 0) last_nz = i;
+      for (int i = 0; i <= last_nz; i++)
+        content.push(hex_digit(static_cast<int>((mantissa >> (48 - i * 4)) & 0xF), upper));
+    }
   }
 
   // Exponent
@@ -652,25 +653,31 @@ template <format_spec Spec, typename T>
 inline void print_arg_with_spec(T arg) {
   using U = std::remove_cv_t<std::decay_t<T>>;
 
-  // Bool without explicit type → "true"/"false"
-  if constexpr (std::is_same_v<U, bool> && Spec.type == '\0') {
-    if (arg)
-      ::sycl::ext::oneapi::experimental::printf("true");
-    else
-      ::sycl::ext::oneapi::experimental::printf("false");
+  // Bool without explicit type (or {:s}) → "true"/"false"
+  if constexpr (std::is_same_v<U, bool> &&
+                (Spec.type == '\0' || Spec.type == 's')) {
+    fmt_buf content;
+    if (arg) { content.push('t'); content.push('r'); content.push('u'); content.push('e'); }
+    else { content.push('f'); content.push('a'); content.push('l'); content.push('s'); content.push('e'); }
+    apply_padding_and_print(content, Spec.fill ? Spec.fill : ' ',
+                            Spec.align ? Spec.align : '>', Spec.width);
     return;
   }
 
   constexpr char etype = effective_type<U, Spec.type>();
 
   // Determine if buffer path is needed
+  constexpr bool is_signed_int = std::is_signed_v<U> && !std::is_same_v<U, bool>;
   constexpr bool needs_buf =
       (etype == 'b' || etype == 'B') ||
       (Spec.align == '^') ||
-      (Spec.fill != '\0' && Spec.fill != ' ');
-  // {:a}/{:A} without # needs custom hex float (printf always adds 0x)
-  constexpr bool needs_hex_float =
-      (etype == 'a' || etype == 'A') && !Spec.alt;
+      (Spec.fill != '\0' && Spec.fill != ' ') ||
+      // signed hex/oct: std::format shows -sign, printf doesn't
+      (is_signed_int && (etype == 'x' || etype == 'X' || etype == 'o')) ||
+      // {:#x} on 0: printf skips prefix, std::format doesn't
+      (Spec.alt && (etype == 'x' || etype == 'X'));
+  // {:a}/{:A} always needs custom hex float (std::format never adds 0x)
+  constexpr bool needs_hex_float = (etype == 'a' || etype == 'A');
 
   if constexpr (needs_hex_float) {
     format_hex_float<Spec, etype>(arg);
