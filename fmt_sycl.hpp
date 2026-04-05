@@ -9,7 +9,18 @@
 
 #pragma once
 
-#include <sycl/ext/oneapi/experimental/builtins.hpp>
+// Backend detection: DPC++ vs AdaptiveCpp
+#if defined(__ADAPTIVECPP__) || defined(__HIPSYCL__) || defined(__ACPP__)
+  #define FMT_SYCL_ACPP 1
+  #include <cstdio>
+  #define DEVICE_PRINTF(...) printf(__VA_ARGS__)
+#else
+  #define FMT_SYCL_ACPP 0
+  #include <sycl/ext/oneapi/experimental/builtins.hpp>
+  #define DEVICE_PRINTF(...) \
+    ::sycl::ext::oneapi::experimental::printf(__VA_ARGS__)
+#endif
+
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -185,7 +196,7 @@ consteval auto make_literal() {
 template <fixed_string Lit, size_t... Is>
 inline void emit_literal_impl(std::index_sequence<Is...>) {
   static constexpr char s[] = {Lit.data[Is]..., '\0'};
-  ::sycl::ext::oneapi::experimental::printf(s);
+  DEVICE_PRINTF(s);
 }
 
 template <fixed_string Lit>
@@ -206,42 +217,42 @@ inline void print_arg_default(T arg) {
 
   if constexpr (std::is_same_v<U, bool>) {
     if (arg)
-      ::sycl::ext::oneapi::experimental::printf("true");
+      DEVICE_PRINTF("true");
     else
-      ::sycl::ext::oneapi::experimental::printf("false");
+      DEVICE_PRINTF("false");
   } else if constexpr (std::is_same_v<U, char>) {
-    ::sycl::ext::oneapi::experimental::printf("%c", arg);
+    DEVICE_PRINTF("%c", arg);
   } else if constexpr (std::is_integral_v<U> && std::is_signed_v<U>) {
     if constexpr (sizeof(U) <= 4)
-      ::sycl::ext::oneapi::experimental::printf("%d",
+      DEVICE_PRINTF("%d",
                                                 static_cast<int>(arg));
     else
-      ::sycl::ext::oneapi::experimental::printf(
+      DEVICE_PRINTF(
           "%lld", static_cast<long long>(arg));
   } else if constexpr (std::is_integral_v<U> && std::is_unsigned_v<U>) {
     if constexpr (sizeof(U) <= 4)
-      ::sycl::ext::oneapi::experimental::printf("%u",
+      DEVICE_PRINTF("%u",
                                                 static_cast<unsigned>(arg));
     else
-      ::sycl::ext::oneapi::experimental::printf(
+      DEVICE_PRINTF(
           "%llu", static_cast<unsigned long long>(arg));
   } else if constexpr (std::is_floating_point_v<U>) {
     double val = static_cast<double>(arg);
     bool neg = __builtin_bit_cast(uint64_t, val) >> 63;
     if (neg) {
-      ::sycl::ext::oneapi::experimental::printf("-");
+      DEVICE_PRINTF("-");
       val = -val;
     }
     char dbuf[32];
     int dlen = dragonbox::format_shortest(dbuf, val);
     for (int i = 0; i < dlen; i++)
-      ::sycl::ext::oneapi::experimental::printf("%c", dbuf[i]);
+      DEVICE_PRINTF("%c", dbuf[i]);
   } else if constexpr (std::is_pointer_v<U>) {
     using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
     if constexpr (std::is_same_v<Pointee, char>)
-      ::sycl::ext::oneapi::experimental::printf("%s", arg);
+      DEVICE_PRINTF("%s", arg);
     else
-      ::sycl::ext::oneapi::experimental::printf("%p", arg);
+      DEVICE_PRINTF("%p", arg);
   }
 }
 
@@ -443,7 +454,7 @@ consteval printf_fmt_buf build_printf_fmt() {
 template <printf_fmt_buf PF, typename T, size_t... Is>
 inline void emit_printf_with_arg_impl(T arg, std::index_sequence<Is...>) {
   static constexpr char s[] = {PF.data[Is]..., '\0'};
-  ::sycl::ext::oneapi::experimental::printf(s, arg);
+  DEVICE_PRINTF(s, arg);
 }
 
 template <printf_fmt_buf PF, typename T>
@@ -487,12 +498,12 @@ struct fmt_buf {
 
 inline void print_buf(const fmt_buf &buf) {
   for (int i = 0; i < buf.len; i++)
-    ::sycl::ext::oneapi::experimental::printf("%c", buf.data[i]);
+    DEVICE_PRINTF("%c", buf.data[i]);
 }
 
 inline void print_fill(char c, int n) {
   for (int i = 0; i < n; i++)
-    ::sycl::ext::oneapi::experimental::printf("%c", c);
+    DEVICE_PRINTF("%c", c);
 }
 
 // Format unsigned integer into buffer in given base
