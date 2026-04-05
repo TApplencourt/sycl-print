@@ -206,6 +206,63 @@ inline void print_arg_default(T arg) {
 }
 
 // ============================================================
+// print_arg_typed — print one arg with an explicit type char
+// ============================================================
+
+consteval bool is_type_char(char c) {
+  return c == 'd' || c == 'x' || c == 'X' || c == 'o' ||
+         c == 'b' || c == 'B' ||
+         c == 'f' || c == 'e' || c == 'E' ||
+         c == 'g' || c == 'G' ||
+         c == 'a' || c == 'A' ||
+         c == 'c' || c == 's' || c == 'p';
+}
+
+template <char TypeChar, typename T>
+inline void print_arg_typed(T arg) {
+  using U = std::remove_cv_t<std::decay_t<T>>;
+
+  if constexpr (TypeChar == 'd') {
+    // Signed decimal — also handles bool→0/1, char→ascii
+    if constexpr (sizeof(U) <= 4)
+      ::sycl::ext::oneapi::experimental::printf("%d", static_cast<int>(arg));
+    else
+      ::sycl::ext::oneapi::experimental::printf("%lld",
+                                                static_cast<long long>(arg));
+  } else if constexpr (TypeChar == 'x' || TypeChar == 'X' ||
+                        TypeChar == 'o') {
+    // Unsigned integer representations
+    if constexpr (sizeof(U) <= 4) {
+      static constexpr char spec[] = {'%', TypeChar, '\0'};
+      ::sycl::ext::oneapi::experimental::printf(
+          spec, static_cast<unsigned>(arg));
+    } else {
+      static constexpr char spec[] = {'%', 'l', 'l', TypeChar, '\0'};
+      ::sycl::ext::oneapi::experimental::printf(
+          spec, static_cast<unsigned long long>(arg));
+    }
+  } else if constexpr (TypeChar == 'b' || TypeChar == 'B') {
+    // Binary — Phase 4, fall back to default for now
+    print_arg_default(arg);
+  } else if constexpr (TypeChar == 'c') {
+    ::sycl::ext::oneapi::experimental::printf("%c", static_cast<char>(arg));
+  } else if constexpr (TypeChar == 's') {
+    ::sycl::ext::oneapi::experimental::printf("%s", arg);
+  } else if constexpr (TypeChar == 'p') {
+    ::sycl::ext::oneapi::experimental::printf("%p", arg);
+  } else if constexpr (TypeChar == 'f' || TypeChar == 'e' ||
+                        TypeChar == 'E' || TypeChar == 'g' ||
+                        TypeChar == 'G' || TypeChar == 'a' ||
+                        TypeChar == 'A') {
+    // Floating-point types
+    static constexpr char spec[] = {'%', TypeChar, '\0'};
+    ::sycl::ext::oneapi::experimental::printf(spec, static_cast<double>(arg));
+  } else {
+    print_arg_default(arg);
+  }
+}
+
+// ============================================================
 // print_impl — recursive: split on first placeholder, recurse
 // ============================================================
 
@@ -233,9 +290,13 @@ inline void print_impl(T arg, Rest... rest) {
     emit_literal<prefix>();
   }
 
-  // Print the argument with default specifier
-  // (Phase 2 will use info.has_spec / info.spec_beg to override)
-  print_arg_default(arg);
+  // Print the argument — use type specifier if present
+  if constexpr (info.has_spec && info.close > info.spec_beg &&
+                is_type_char(Fmt[info.close - 1])) {
+    print_arg_typed<Fmt[info.close - 1]>(arg);
+  } else {
+    print_arg_default(arg);
+  }
 
   // Recurse with remaining format string and arguments
   print_impl<Fmt, info.close + 1>(rest...);
