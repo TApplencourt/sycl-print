@@ -206,7 +206,7 @@ inline void print_arg_default(T arg) {
 }
 
 // ============================================================
-// print_arg_typed — print one arg with an explicit type char
+// Format spec parsing and printf format string generation
 // ============================================================
 
 consteval bool is_type_char(char c) {
@@ -218,47 +218,207 @@ consteval bool is_type_char(char c) {
          c == 'c' || c == 's' || c == 'p';
 }
 
-template <char TypeChar, typename T>
-inline void print_arg_typed(T arg) {
+consteval bool is_align_char(char c) {
+  return c == '<' || c == '>' || c == '^';
+}
+
+// Parsed format spec: [[fill]align][sign][#][0][width][.precision][type]
+struct format_spec {
+  char fill = '\0';
+  char align = '\0';
+  char sign = '\0';
+  bool alt = false;
+  bool zero_pad = false;
+  int width = 0;
+  int precision = -1;
+  char type = '\0';
+};
+
+template <fixed_string Fmt, size_t Begin, size_t End>
+consteval format_spec parse_spec() {
+  format_spec s{};
+  size_t i = Begin;
+
+  // [[fill]align]
+  if (i + 1 < End && is_align_char(Fmt[i + 1])) {
+    s.fill = Fmt[i];
+    s.align = Fmt[i + 1];
+    i += 2;
+  } else if (i < End && is_align_char(Fmt[i])) {
+    s.align = Fmt[i];
+    i++;
+  }
+
+  // [sign]
+  if (i < End && (Fmt[i] == '+' || Fmt[i] == '-' || Fmt[i] == ' ')) {
+    s.sign = Fmt[i];
+    i++;
+  }
+
+  // [#]
+  if (i < End && Fmt[i] == '#') {
+    s.alt = true;
+    i++;
+  }
+
+  // [0]
+  if (i < End && Fmt[i] == '0') {
+    s.zero_pad = true;
+    i++;
+  }
+
+  // [width]
+  while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
+    s.width = s.width * 10 + (Fmt[i] - '0');
+    i++;
+  }
+
+  // [.precision]
+  if (i < End && Fmt[i] == '.') {
+    i++;
+    s.precision = 0;
+    while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
+      s.precision = s.precision * 10 + (Fmt[i] - '0');
+      i++;
+    }
+  }
+
+  // [type]
+  if (i < End && is_type_char(Fmt[i])) {
+    s.type = Fmt[i];
+  }
+
+  return s;
+}
+
+// Effective printf type char given the spec and the C++ argument type
+template <typename U, char SpecType>
+consteval char effective_type() {
+  if (SpecType != '\0') return SpecType;
+  if constexpr (std::is_same_v<U, char>) return 'c';
+  else if constexpr (std::is_floating_point_v<U>) return 'g';
+  else if constexpr (std::is_integral_v<U> && std::is_signed_v<U>) return 'd';
+  else if constexpr (std::is_integral_v<U> && std::is_unsigned_v<U>) return 'u';
+  else if constexpr (std::is_pointer_v<U>) {
+    using P = std::remove_cv_t<std::remove_pointer_t<U>>;
+    if constexpr (std::is_same_v<P, char>) return 's';
+    else return 'p';
+  } else return 'd';
+}
+
+// Buffer for building printf format strings at compile time
+struct printf_fmt_buf {
+  char data[32]{};
+  size_t len = 0;
+
+  constexpr void push(char c) { data[len++] = c; }
+  constexpr void push_int(int val) {
+    if (val == 0) { push('0'); return; }
+    char tmp[10]{};
+    int n = 0;
+    while (val > 0) { tmp[n++] = '0' + val % 10; val /= 10; }
+    for (int j = n - 1; j >= 0; j--) push(tmp[j]);
+  }
+};
+
+// Build the printf format string: %[flags][width][.precision][length]type
+template <format_spec Spec, char EffType, bool Is64>
+consteval printf_fmt_buf build_printf_fmt() {
+  printf_fmt_buf buf;
+  buf.push('%');
+
+  // Flags
+  if (Spec.align == '<') buf.push('-');
+  if (Spec.sign == '+') buf.push('+');
+  else if (Spec.sign == ' ') buf.push(' ');
+  if (Spec.alt) buf.push('#');
+  if (Spec.zero_pad && Spec.align != '<') buf.push('0');
+
+  // Width
+  if (Spec.width > 0) buf.push_int(Spec.width);
+
+  // Precision
+  if (Spec.precision >= 0) {
+    buf.push('.');
+    buf.push_int(Spec.precision);
+  }
+
+  // Length modifier for 64-bit integers
+  bool is_int = (EffType == 'd' || EffType == 'u' ||
+                 EffType == 'x' || EffType == 'X' || EffType == 'o');
+  if (is_int && Is64) {
+    buf.push('l');
+    buf.push('l');
+  }
+
+  // Type
+  buf.push(EffType);
+  buf.data[buf.len] = '\0';
+  return buf;
+}
+
+// ============================================================
+// emit_printf_with_arg — printf a format spec with one argument
+// ============================================================
+
+template <printf_fmt_buf PF, typename T, size_t... Is>
+inline void emit_printf_with_arg_impl(T arg, std::index_sequence<Is...>) {
+  static constexpr char s[] = {PF.data[Is]..., '\0'};
+  ::sycl::ext::oneapi::experimental::printf(s, arg);
+}
+
+template <printf_fmt_buf PF, typename T>
+inline void emit_printf_with_arg(T arg) {
+  emit_printf_with_arg_impl<PF>(arg, std::make_index_sequence<PF.len>{});
+}
+
+// ============================================================
+// print_arg_with_spec — print one arg using a parsed format spec
+// ============================================================
+
+template <format_spec Spec, typename T>
+inline void print_arg_with_spec(T arg) {
   using U = std::remove_cv_t<std::decay_t<T>>;
 
-  if constexpr (TypeChar == 'd') {
-    // Signed decimal — also handles bool→0/1, char→ascii
-    if constexpr (sizeof(U) <= 4)
-      ::sycl::ext::oneapi::experimental::printf("%d", static_cast<int>(arg));
+  // Bool without explicit type → "true"/"false" (no printf formatting)
+  if constexpr (std::is_same_v<U, bool> && Spec.type == '\0') {
+    if (arg)
+      ::sycl::ext::oneapi::experimental::printf("true");
     else
-      ::sycl::ext::oneapi::experimental::printf("%lld",
-                                                static_cast<long long>(arg));
-  } else if constexpr (TypeChar == 'x' || TypeChar == 'X' ||
-                        TypeChar == 'o') {
-    // Unsigned integer representations
-    if constexpr (sizeof(U) <= 4) {
-      static constexpr char spec[] = {'%', TypeChar, '\0'};
-      ::sycl::ext::oneapi::experimental::printf(
-          spec, static_cast<unsigned>(arg));
-    } else {
-      static constexpr char spec[] = {'%', 'l', 'l', TypeChar, '\0'};
-      ::sycl::ext::oneapi::experimental::printf(
-          spec, static_cast<unsigned long long>(arg));
-    }
-  } else if constexpr (TypeChar == 'b' || TypeChar == 'B') {
-    // Binary — Phase 4, fall back to default for now
+      ::sycl::ext::oneapi::experimental::printf("false");
+    return;
+  }
+
+  // Binary (b/B) → Phase 4, degrade to default
+  if constexpr (Spec.type == 'b' || Spec.type == 'B') {
     print_arg_default(arg);
-  } else if constexpr (TypeChar == 'c') {
-    ::sycl::ext::oneapi::experimental::printf("%c", static_cast<char>(arg));
-  } else if constexpr (TypeChar == 's') {
-    ::sycl::ext::oneapi::experimental::printf("%s", arg);
-  } else if constexpr (TypeChar == 'p') {
-    ::sycl::ext::oneapi::experimental::printf("%p", arg);
-  } else if constexpr (TypeChar == 'f' || TypeChar == 'e' ||
-                        TypeChar == 'E' || TypeChar == 'g' ||
-                        TypeChar == 'G' || TypeChar == 'a' ||
-                        TypeChar == 'A') {
-    // Floating-point types
-    static constexpr char spec[] = {'%', TypeChar, '\0'};
-    ::sycl::ext::oneapi::experimental::printf(spec, static_cast<double>(arg));
+    return;
+  }
+
+  constexpr char etype = effective_type<U, Spec.type>();
+  constexpr bool is_64 = sizeof(U) > 4;
+  constexpr auto pfmt = build_printf_fmt<Spec, etype, is_64>();
+
+  // Cast argument to the type printf expects
+  if constexpr (etype == 'c') {
+    emit_printf_with_arg<pfmt>(static_cast<char>(arg));
+  } else if constexpr (etype == 'd') {
+    if constexpr (sizeof(U) <= 4)
+      emit_printf_with_arg<pfmt>(static_cast<int>(arg));
+    else
+      emit_printf_with_arg<pfmt>(static_cast<long long>(arg));
+  } else if constexpr (etype == 'u' || etype == 'x' || etype == 'X' ||
+                        etype == 'o') {
+    if constexpr (sizeof(U) <= 4)
+      emit_printf_with_arg<pfmt>(static_cast<unsigned>(arg));
+    else
+      emit_printf_with_arg<pfmt>(static_cast<unsigned long long>(arg));
+  } else if constexpr (etype == 'f' || etype == 'e' || etype == 'E' ||
+                        etype == 'g' || etype == 'G' || etype == 'a' ||
+                        etype == 'A') {
+    emit_printf_with_arg<pfmt>(static_cast<double>(arg));
   } else {
-    print_arg_default(arg);
+    emit_printf_with_arg<pfmt>(arg);
   }
 }
 
@@ -290,10 +450,10 @@ inline void print_impl(T arg, Rest... rest) {
     emit_literal<prefix>();
   }
 
-  // Print the argument — use type specifier if present
-  if constexpr (info.has_spec && info.close > info.spec_beg &&
-                is_type_char(Fmt[info.close - 1])) {
-    print_arg_typed<Fmt[info.close - 1]>(arg);
+  // Print the argument
+  if constexpr (info.has_spec && info.close > info.spec_beg) {
+    constexpr auto spec = parse_spec<Fmt, info.spec_beg, info.close>();
+    print_arg_with_spec<spec>(arg);
   } else {
     print_arg_default(arg);
   }
