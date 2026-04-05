@@ -15,6 +15,8 @@
 #include <type_traits>
 #include <utility> // std::index_sequence
 
+#include "dragonbox.hpp"
+
 namespace fmt {
 namespace sycl {
 namespace detail {
@@ -194,8 +196,16 @@ inline void print_arg_default(T arg) {
       ::sycl::ext::oneapi::experimental::printf(
           "%llu", static_cast<unsigned long long>(arg));
   } else if constexpr (std::is_floating_point_v<U>) {
-    ::sycl::ext::oneapi::experimental::printf("%g",
-                                              static_cast<double>(arg));
+    double val = static_cast<double>(arg);
+    bool neg = __builtin_bit_cast(uint64_t, val) >> 63;
+    if (neg) {
+      ::sycl::ext::oneapi::experimental::printf("-");
+      val = -val;
+    }
+    char dbuf[32];
+    int dlen = dragonbox::format_shortest(dbuf, val);
+    for (int i = 0; i < dlen; i++)
+      ::sycl::ext::oneapi::experimental::printf("%c", dbuf[i]);
   } else if constexpr (std::is_pointer_v<U>) {
     using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
     if constexpr (std::is_same_v<Pointee, char>)

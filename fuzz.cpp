@@ -38,10 +38,18 @@ static unsigned rand_uint() { return static_cast<unsigned>(rng()); }
 static int64_t rand_i64() { return static_cast<int64_t>(rng()); }
 static uint64_t rand_u64() { return rng(); }
 static double rand_double() {
-  // Generate a double in a useful range: [-1e6, 1e6]
-  int64_t r = static_cast<int64_t>(rng() % 2000001) - 1000000;
-  uint64_t frac = rng() % 1000000;
-  return static_cast<double>(r) + static_cast<double>(frac) / 1000000.0;
+  // Build a double from bits to avoid FP computation differences between
+  // compiler modes (-fsycl may use different FP model than host).
+  uint64_t r1 = rng();
+  uint64_t r2 = rng();
+  // Exponent: bias 1023, range [1013..1033] → values in ~[2^-10, 2^10]
+  uint64_t exp = 1013 + (r1 % 21);
+  // Mantissa: 52 random bits
+  uint64_t mant = r2 & 0x000FFFFFFFFFFFFFULL;
+  // Sign: from r1
+  uint64_t sign = (r1 >> 32) & 1;
+  uint64_t bits = (sign << 63) | (exp << 52) | mant;
+  return __builtin_bit_cast(double, bits);
 }
 static char rand_char() { return static_cast<char>(33 + rng() % 94); } // printable ASCII
 
@@ -278,9 +286,10 @@ int main() {
     P("{:.2e} {} {:x} {} {}\n", d, i, u, c, b);
   }
   for (int _i = 0; _i < N_ITER; _i++) {
-    P("{} {:g} {} {} {} {} {}\n",
-      rand_int(), rand_double(), rand_char(),
-      (rng() & 1) != 0, rand_uint(), rand_i64(), "lit");
+    int v1 = rand_int(); double v2 = rand_double(); char v3 = rand_char();
+    bool v4 = (rng() & 1) != 0; unsigned v5 = rand_uint();
+    int64_t v6 = rand_i64();
+    P("{} {} {} {} {} {} {}\n", v1, v2, v3, v4, v5, v6, "lit");
   }
 
   // ============================================================
