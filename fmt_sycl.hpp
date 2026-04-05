@@ -497,6 +497,110 @@ inline int compute_float_f_width(double val) {
   return w;
 }
 
+// Apply fill + alignment and print (shared by int/hex-float buffer paths)
+inline void apply_padding_and_print(const fmt_buf &content, char fill,
+                                    char align, int width) {
+  int pad = width > content.len ? width - content.len : 0;
+  if (pad == 0) {
+    print_buf(content);
+  } else if (align == '<') {
+    print_buf(content);
+    print_fill(fill, pad);
+  } else if (align == '^') {
+    print_fill(fill, pad / 2);
+    print_buf(content);
+    print_fill(fill, pad - pad / 2);
+  } else {
+    print_fill(fill, pad);
+    print_buf(content);
+  }
+}
+
+// Hex digit helper
+inline char hex_digit(int d, bool upper) {
+  if (d < 10) return static_cast<char>('0' + d);
+  return static_cast<char>((upper ? 'A' : 'a') + d - 10);
+}
+
+// Format hex float from IEEE 754 bits (fixes {:a} 0x prefix difference)
+template <format_spec Spec, char EffType, typename T>
+inline void format_hex_float(T arg) {
+  double val = static_cast<double>(arg);
+  constexpr bool upper = (EffType == 'A');
+
+  fmt_buf content;
+
+  // Sign
+  if (val < 0.0) { content.push('-'); val = -val; }
+  else if (Spec.sign == '+') content.push('+');
+  else if (Spec.sign == ' ') content.push(' ');
+
+  // Prefix only with #
+  if constexpr (Spec.alt) {
+    content.push('0');
+    content.push(upper ? 'X' : 'x');
+  }
+
+  // Extract IEEE 754 bits
+  uint64_t bits = __builtin_bit_cast(uint64_t, val);
+  int biased_exp = static_cast<int>((bits >> 52) & 0x7FF);
+  uint64_t mantissa = bits & 0x000FFFFFFFFFFFFFULL;
+
+  // Inf / NaN
+  if (biased_exp == 0x7FF) {
+    const char *s = (mantissa == 0) ? (upper ? "INF" : "inf")
+                                    : (upper ? "NAN" : "nan");
+    while (*s) content.push(*s++);
+    apply_padding_and_print(content, Spec.fill ? Spec.fill : ' ',
+                            Spec.align ? Spec.align : '>', Spec.width);
+    return;
+  }
+
+  // Leading digit + exponent
+  int exponent;
+  if (biased_exp == 0) {
+    if (mantissa == 0) { // zero
+      content.push('0');
+      content.push(upper ? 'P' : 'p');
+      content.push('+');
+      content.push('0');
+      apply_padding_and_print(content, Spec.fill ? Spec.fill : ' ',
+                              Spec.align ? Spec.align : '>', Spec.width);
+      return;
+    }
+    content.push('0'); // subnormal
+    exponent = -1022;
+  } else {
+    content.push('1'); // normal
+    exponent = biased_exp - 1023;
+  }
+
+  // Fractional mantissa (52 bits = 13 hex digits, trim trailing zeros)
+  if (mantissa != 0) {
+    content.push('.');
+    int last_nz = -1;
+    for (int i = 0; i < 13; i++)
+      if (((mantissa >> (48 - i * 4)) & 0xF) != 0) last_nz = i;
+    for (int i = 0; i <= last_nz; i++)
+      content.push(hex_digit(static_cast<int>((mantissa >> (48 - i * 4)) & 0xF), upper));
+  }
+
+  // Exponent
+  content.push(upper ? 'P' : 'p');
+  if (exponent >= 0) content.push('+');
+  else { content.push('-'); exponent = -exponent; }
+  if (exponent == 0) {
+    content.push('0');
+  } else {
+    char tmp[10]; int n = 0;
+    while (exponent > 0) { tmp[n++] = static_cast<char>('0' + exponent % 10); exponent /= 10; }
+    for (int i = n - 1; i >= 0; i--) content.push(tmp[i]);
+  }
+
+  apply_padding_and_print(content, Spec.fill ? Spec.fill : ' ',
+                          Spec.align ? Spec.align : '>', Spec.width);
+}
+
 // Float with custom fill — print fill chars around printf output
 template <format_spec Spec, char EffType, typename T>
 inline void print_float_with_fill(T arg) {
@@ -559,13 +663,18 @@ inline void print_arg_with_spec(T arg) {
 
   constexpr char etype = effective_type<U, Spec.type>();
 
-  // Determine if buffer path is needed (binary, custom fill, center)
+  // Determine if buffer path is needed
   constexpr bool needs_buf =
       (etype == 'b' || etype == 'B') ||
       (Spec.align == '^') ||
       (Spec.fill != '\0' && Spec.fill != ' ');
+  // {:a}/{:A} without # needs custom hex float (printf always adds 0x)
+  constexpr bool needs_hex_float =
+      (etype == 'a' || etype == 'A') && !Spec.alt;
 
-  if constexpr (needs_buf && is_int_format(etype)) {
+  if constexpr (needs_hex_float) {
+    format_hex_float<Spec, etype>(arg);
+  } else if constexpr (needs_buf && is_int_format(etype)) {
     // Buffer path — full integer formatting
     format_int_buf<Spec, etype>(arg);
   } else if constexpr (needs_buf && is_float_format(etype)) {
