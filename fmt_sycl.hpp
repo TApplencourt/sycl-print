@@ -57,9 +57,10 @@ struct placeholder_info {
   size_t spec_beg; // index after ':' (or close if no spec)
   bool has_spec;
   bool found;
+  int index;       // -1 = auto ({}), >=0 = positional ({N})
 };
 
-// Find the first {} or {:spec} placeholder starting at position From
+// Find the first {} or {:spec} or {N} or {N:spec} placeholder
 template <fixed_string Fmt, size_t From = 0>
 consteval placeholder_info find_placeholder() {
   constexpr size_t len = flen(Fmt);
@@ -70,29 +71,53 @@ consteval placeholder_info find_placeholder() {
         i += 2;
         continue;
       }
-      // Found start of placeholder — scan to closing '}'
+      // Found start of placeholder — parse index then spec
       size_t j = i + 1;
-      bool has_spec = false;
-      size_t spec_beg = j; // default: no spec
-      while (j < len && Fmt[j] != '}') {
-        if (Fmt[j] == ':' && !has_spec) {
-          has_spec = true;
-          spec_beg = j + 1;
+      int index = -1; // auto by default
+
+      // Parse optional numeric index
+      if (j < len && Fmt[j] >= '0' && Fmt[j] <= '9') {
+        index = 0;
+        while (j < len && Fmt[j] >= '0' && Fmt[j] <= '9') {
+          index = index * 10 + (Fmt[j] - '0');
+          j++;
         }
-        j++;
       }
-      return {i, j, spec_beg, has_spec, true};
+
+      // Parse optional :spec
+      bool has_spec = false;
+      size_t spec_beg = j;
+      if (j < len && Fmt[j] == ':') {
+        has_spec = true;
+        spec_beg = j + 1;
+        j++;
+        while (j < len && Fmt[j] != '}') j++;
+      }
+      // j now points at '}' (or end)
+      size_t close = j;
+      if (!has_spec) spec_beg = close;
+      return {i, close, spec_beg, has_spec, true, index};
     } else if (Fmt[i] == '}') {
       if (i + 1 < len && Fmt[i + 1] == '}') {
         i += 2;
         continue;
       }
-      i++; // stray } — skip
+      i++;
     } else {
       i++;
     }
   }
-  return {0, 0, 0, false, false};
+  return {0, 0, 0, false, false, -1};
+}
+
+// ============================================================
+// get_arg — compile-time indexed access into parameter pack
+// ============================================================
+
+template <size_t I, typename T, typename... Rest>
+constexpr auto get_arg(T arg, Rest... rest) {
+  if constexpr (I == 0) return arg;
+  else return get_arg<I - 1>(rest...);
 }
 
 // ============================================================
@@ -737,43 +762,57 @@ inline void print_arg_with_spec(T arg) {
 }
 
 // ============================================================
-// print_impl — recursive: split on first placeholder, recurse
+// print_impl — walk format string, access args by index
 // ============================================================
 
-// Base case: no more arguments — print remaining literal text
-template <fixed_string Fmt, size_t Pos>
-inline void print_impl() {
-  constexpr size_t end = flen(Fmt);
-  constexpr size_t out_sz = literal_out_size<Fmt, Pos, end>();
-  if constexpr (out_sz > 0) {
-    constexpr auto lit = make_literal<Fmt, Pos, end>();
-    emit_literal<lit>();
-  }
-}
+// Helper: print one arg (selected by index) with optional spec
+template <fixed_string Fmt, placeholder_info Info, typename... Args>
+inline void print_one_arg(Args... args) {
+  constexpr size_t idx = Info.index >= 0 ? static_cast<size_t>(Info.index) : 0;
+  auto arg = get_arg<idx>(args...);
 
-// Recursive case: handle next placeholder, then recurse
-template <fixed_string Fmt, size_t Pos, typename T, typename... Rest>
-inline void print_impl(T arg, Rest... rest) {
-  constexpr auto info = find_placeholder<Fmt, Pos>();
-  static_assert(info.found, "fmt-sycl: too many arguments for format string");
-
-  // Print literal prefix before this placeholder
-  constexpr size_t prefix_sz = literal_out_size<Fmt, Pos, info.open>();
-  if constexpr (prefix_sz > 0) {
-    constexpr auto prefix = make_literal<Fmt, Pos, info.open>();
-    emit_literal<prefix>();
-  }
-
-  // Print the argument
-  if constexpr (info.has_spec && info.close > info.spec_beg) {
-    constexpr auto spec = parse_spec<Fmt, info.spec_beg, info.close>();
+  if constexpr (Info.has_spec && Info.close > Info.spec_beg) {
+    constexpr auto spec = parse_spec<Fmt, Info.spec_beg, Info.close>();
     print_arg_with_spec<spec>(arg);
   } else {
     print_arg_default(arg);
   }
+}
 
-  // Recurse with remaining format string and arguments
-  print_impl<Fmt, info.close + 1>(rest...);
+// Recursive: find next placeholder, print prefix + arg, advance
+template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
+inline void print_impl(Args... args) {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+
+  if constexpr (!info.found) {
+    // No more placeholders — print remaining literal text
+    constexpr size_t end = flen(Fmt);
+    constexpr size_t out_sz = literal_out_size<Fmt, Pos, end>();
+    if constexpr (out_sz > 0) {
+      constexpr auto lit = make_literal<Fmt, Pos, end>();
+      emit_literal<lit>();
+    }
+  } else {
+    // Print literal prefix before this placeholder
+    constexpr size_t prefix_sz = literal_out_size<Fmt, Pos, info.open>();
+    if constexpr (prefix_sz > 0) {
+      constexpr auto prefix = make_literal<Fmt, Pos, info.open>();
+      emit_literal<prefix>();
+    }
+
+    // Resolve arg index: positional {N} or auto-incremented {}
+    constexpr bool is_auto = (info.index < 0);
+    constexpr auto resolved = placeholder_info{
+        info.open, info.close, info.spec_beg, info.has_spec, info.found,
+        is_auto ? static_cast<int>(AutoIdx) : info.index};
+
+    // Print the selected argument
+    print_one_arg<Fmt, resolved>(args...);
+
+    // Recurse — advance AutoIdx only if this was auto-indexed
+    constexpr size_t next_auto = is_auto ? AutoIdx + 1 : AutoIdx;
+    print_impl<Fmt, info.close + 1, next_auto>(args...);
+  }
 }
 
 } // namespace detail
@@ -782,16 +821,9 @@ inline void print_impl(T arg, Rest... rest) {
 // Public API
 // ============================================================
 
-// No arguments: print literal text only
-template <detail::fixed_string Fmt>
-inline void print() {
-  detail::print_impl<Fmt, 0>();
-}
-
-// One or more arguments
-template <detail::fixed_string Fmt, typename T, typename... Rest>
-inline void print(T arg, Rest... rest) {
-  detail::print_impl<Fmt, 0>(arg, rest...);
+template <detail::fixed_string Fmt, typename... Args>
+inline void print(Args... args) {
+  detail::print_impl<Fmt, 0, 0>(args...);
 }
 
 } // namespace sycl
