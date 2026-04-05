@@ -373,14 +373,182 @@ inline void emit_printf_with_arg(T arg) {
 }
 
 // ============================================================
+// Device-side buffer for Phase 4 (binary, fill, center)
+// ============================================================
+
+struct fmt_buf {
+  char data[68]{};
+  int len = 0;
+  void push(char c) { if (len < 67) data[len++] = c; }
+  void push_n(char c, int n) {
+    for (int i = 0; i < n && len < 67; i++) data[len++] = c;
+  }
+};
+
+inline void print_buf(const fmt_buf &buf) {
+  for (int i = 0; i < buf.len; i++)
+    ::sycl::ext::oneapi::experimental::printf("%c", buf.data[i]);
+}
+
+inline void print_fill(char c, int n) {
+  for (int i = 0; i < n; i++)
+    ::sycl::ext::oneapi::experimental::printf("%c", c);
+}
+
+// Format unsigned integer into buffer in given base
+template <int Base, bool Upper, typename U>
+inline void uint_to_buf(fmt_buf &buf, U val) {
+  if (val == 0) { buf.push('0'); return; }
+  char tmp[65];
+  int n = 0;
+  while (val > 0) {
+    int d = static_cast<int>(val % Base);
+    if constexpr (Upper)
+      tmp[n++] = "0123456789ABCDEF"[d];
+    else
+      tmp[n++] = "0123456789abcdef"[d];
+    val /= Base;
+  }
+  for (int i = n - 1; i >= 0; i--) buf.push(tmp[i]);
+}
+
+// Full integer formatting into buffer (handles sign, prefix, zero-pad, fill)
+template <format_spec Spec, char EffType, typename T>
+inline void format_int_buf(T arg) {
+  using U = std::remove_cv_t<std::decay_t<T>>;
+  using Uns = std::conditional_t<(sizeof(U) <= 4), unsigned, unsigned long long>;
+  constexpr int base = (EffType == 'b' || EffType == 'B') ? 2
+                     : (EffType == 'o')                    ? 8
+                     : (EffType == 'x' || EffType == 'X')  ? 16
+                                                           : 10;
+  constexpr bool upper = (EffType == 'X' || EffType == 'B');
+
+  // Absolute value + sign
+  bool neg = false;
+  Uns uval;
+  if constexpr (std::is_same_v<U, bool>) {
+    uval = static_cast<Uns>(arg);
+  } else if constexpr (std::is_signed_v<U>) {
+    if (arg < 0) { neg = true; uval = Uns(0) - static_cast<Uns>(arg); }
+    else uval = static_cast<Uns>(arg);
+  } else {
+    uval = static_cast<Uns>(arg);
+  }
+
+  char sc = neg ? '-' : (Spec.sign == '+') ? '+' : (Spec.sign == ' ') ? ' ' : '\0';
+
+  // Alt prefix
+  char pfx[3] = {};
+  int pfx_n = 0;
+  if constexpr (Spec.alt) {
+    if constexpr (base == 2) { pfx[0] = '0'; pfx[1] = upper ? 'B' : 'b'; pfx_n = 2; }
+    else if constexpr (base == 16) { pfx[0] = '0'; pfx[1] = upper ? 'X' : 'x'; pfx_n = 2; }
+    else if constexpr (base == 8) { if (uval != 0) { pfx[0] = '0'; pfx_n = 1; } }
+  }
+
+  // Digits
+  fmt_buf digits;
+  uint_to_buf<base, upper>(digits, uval);
+
+  // Sign-aware zero padding (only when no explicit fill/align)
+  int content_w = (sc ? 1 : 0) + pfx_n + digits.len;
+  bool zpad = Spec.zero_pad && !Spec.fill && !Spec.align;
+
+  fmt_buf content;
+  if (sc) content.push(sc);
+  for (int i = 0; i < pfx_n; i++) content.push(pfx[i]);
+  if (zpad && Spec.width > content_w)
+    content.push_n('0', Spec.width - content_w);
+  for (int i = 0; i < digits.len; i++) content.push(digits.data[i]);
+
+  // Apply fill + alignment
+  char fill_c = Spec.fill ? Spec.fill : ' ';
+  char align_c = Spec.align ? Spec.align : '>';
+  int pad = Spec.width > content.len ? Spec.width - content.len : 0;
+
+  fmt_buf out;
+  if (pad == 0) {
+    for (int i = 0; i < content.len; i++) out.push(content.data[i]);
+  } else if (align_c == '<') {
+    for (int i = 0; i < content.len; i++) out.push(content.data[i]);
+    out.push_n(fill_c, pad);
+  } else if (align_c == '^') {
+    out.push_n(fill_c, pad / 2);
+    for (int i = 0; i < content.len; i++) out.push(content.data[i]);
+    out.push_n(fill_c, pad - pad / 2);
+  } else {
+    out.push_n(fill_c, pad);
+    for (int i = 0; i < content.len; i++) out.push(content.data[i]);
+  }
+  print_buf(out);
+}
+
+// Compute width of float formatted as {:f} (for fill padding calculation)
+template <format_spec Spec>
+inline int compute_float_f_width(double val) {
+  int w = 0;
+  if (val < 0.0) { w++; val = -val; }
+  else if (Spec.sign == '+' || Spec.sign == ' ') w++;
+  if (val < 1.0) w++;
+  else { double v = val; while (v >= 1.0) { w++; v /= 10.0; } }
+  int p = Spec.precision >= 0 ? Spec.precision : 6;
+  if (p > 0 || Spec.alt) w++;
+  w += p;
+  return w;
+}
+
+// Float with custom fill — print fill chars around printf output
+template <format_spec Spec, char EffType, typename T>
+inline void print_float_with_fill(T arg) {
+  double val = static_cast<double>(arg);
+  // Inner printf spec: same format but without width/fill/align
+  constexpr format_spec inner = {
+    '\0', '\0', Spec.sign, Spec.alt, false, 0, Spec.precision, Spec.type
+  };
+  constexpr auto pfmt = build_printf_fmt<inner, EffType, false>();
+
+  int inner_w;
+  if constexpr (EffType == 'f' || EffType == 'F')
+    inner_w = compute_float_f_width<Spec>(val);
+  else
+    inner_w = Spec.width; // can't compute — skip padding
+
+  char fill_c = Spec.fill ? Spec.fill : ' ';
+  char align_c = Spec.align ? Spec.align : '>';
+  int pad = Spec.width > inner_w ? Spec.width - inner_w : 0;
+
+  if (align_c == '<') {
+    emit_printf_with_arg<pfmt>(val);
+    print_fill(fill_c, pad);
+  } else if (align_c == '^') {
+    print_fill(fill_c, pad / 2);
+    emit_printf_with_arg<pfmt>(val);
+    print_fill(fill_c, pad - pad / 2);
+  } else {
+    print_fill(fill_c, pad);
+    emit_printf_with_arg<pfmt>(val);
+  }
+}
+
+// ============================================================
 // print_arg_with_spec — print one arg using a parsed format spec
 // ============================================================
+
+consteval bool is_int_format(char c) {
+  return c == 'd' || c == 'u' || c == 'x' || c == 'X' ||
+         c == 'o' || c == 'b' || c == 'B';
+}
+
+consteval bool is_float_format(char c) {
+  return c == 'f' || c == 'e' || c == 'E' ||
+         c == 'g' || c == 'G' || c == 'a' || c == 'A';
+}
 
 template <format_spec Spec, typename T>
 inline void print_arg_with_spec(T arg) {
   using U = std::remove_cv_t<std::decay_t<T>>;
 
-  // Bool without explicit type → "true"/"false" (no printf formatting)
+  // Bool without explicit type → "true"/"false"
   if constexpr (std::is_same_v<U, bool> && Spec.type == '\0') {
     if (arg)
       ::sycl::ext::oneapi::experimental::printf("true");
@@ -389,36 +557,43 @@ inline void print_arg_with_spec(T arg) {
     return;
   }
 
-  // Binary (b/B) → Phase 4, degrade to default
-  if constexpr (Spec.type == 'b' || Spec.type == 'B') {
-    print_arg_default(arg);
-    return;
-  }
-
   constexpr char etype = effective_type<U, Spec.type>();
-  constexpr bool is_64 = sizeof(U) > 4;
-  constexpr auto pfmt = build_printf_fmt<Spec, etype, is_64>();
 
-  // Cast argument to the type printf expects
-  if constexpr (etype == 'c') {
-    emit_printf_with_arg<pfmt>(static_cast<char>(arg));
-  } else if constexpr (etype == 'd') {
-    if constexpr (sizeof(U) <= 4)
-      emit_printf_with_arg<pfmt>(static_cast<int>(arg));
-    else
-      emit_printf_with_arg<pfmt>(static_cast<long long>(arg));
-  } else if constexpr (etype == 'u' || etype == 'x' || etype == 'X' ||
-                        etype == 'o') {
-    if constexpr (sizeof(U) <= 4)
-      emit_printf_with_arg<pfmt>(static_cast<unsigned>(arg));
-    else
-      emit_printf_with_arg<pfmt>(static_cast<unsigned long long>(arg));
-  } else if constexpr (etype == 'f' || etype == 'e' || etype == 'E' ||
-                        etype == 'g' || etype == 'G' || etype == 'a' ||
-                        etype == 'A') {
-    emit_printf_with_arg<pfmt>(static_cast<double>(arg));
+  // Determine if buffer path is needed (binary, custom fill, center)
+  constexpr bool needs_buf =
+      (etype == 'b' || etype == 'B') ||
+      (Spec.align == '^') ||
+      (Spec.fill != '\0' && Spec.fill != ' ');
+
+  if constexpr (needs_buf && is_int_format(etype)) {
+    // Buffer path — full integer formatting
+    format_int_buf<Spec, etype>(arg);
+  } else if constexpr (needs_buf && is_float_format(etype)) {
+    // Multi-printf path — fill around printf output
+    print_float_with_fill<Spec, etype>(arg);
   } else {
-    emit_printf_with_arg<pfmt>(arg);
+    // Fast printf path
+    constexpr bool is_64 = sizeof(U) > 4;
+    constexpr auto pfmt = build_printf_fmt<Spec, etype, is_64>();
+
+    if constexpr (etype == 'c') {
+      emit_printf_with_arg<pfmt>(static_cast<char>(arg));
+    } else if constexpr (etype == 'd') {
+      if constexpr (sizeof(U) <= 4)
+        emit_printf_with_arg<pfmt>(static_cast<int>(arg));
+      else
+        emit_printf_with_arg<pfmt>(static_cast<long long>(arg));
+    } else if constexpr (etype == 'u' || etype == 'x' || etype == 'X' ||
+                          etype == 'o') {
+      if constexpr (sizeof(U) <= 4)
+        emit_printf_with_arg<pfmt>(static_cast<unsigned>(arg));
+      else
+        emit_printf_with_arg<pfmt>(static_cast<unsigned long long>(arg));
+    } else if constexpr (is_float_format(etype)) {
+      emit_printf_with_arg<pfmt>(static_cast<double>(arg));
+    } else {
+      emit_printf_with_arg<pfmt>(arg);
+    }
   }
 }
 
