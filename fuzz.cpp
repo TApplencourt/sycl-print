@@ -22,7 +22,7 @@
 #else
   #include "fmt_sycl.hpp"
   #define P(fmt_str, ...) \
-    ::fmt::sycl::print<fmt_str>(__VA_ARGS__)
+    ::sycl::khr::print<fmt_str>(__VA_ARGS__)
 #endif
 
 // Simple deterministic PRNG (xorshift64)

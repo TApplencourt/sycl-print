@@ -6,18 +6,23 @@
 //   diff <(./examples_std) <(ONEAPI_DEVICE_SELECTOR=*:cpu ./examples_sycl)
 
 #include <cstdint>
+#include <cstdlib>
 
 #ifdef USE_STD
   #include <format>
   #include <iostream>
   #define PRINT(fmt_str, ...) \
     std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)
+  #define PRINTLN(fmt_str, ...) \
+    std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__) << '\n'
   #define RUN(...) do { __VA_ARGS__; } while (0)
 #else
   #include "fmt_sycl.hpp"
   #include <sycl/sycl.hpp>
   #define PRINT(fmt_str, ...) \
-    ::fmt::sycl::print<fmt_str>(__VA_ARGS__)
+    ::sycl::khr::print<fmt_str>(__VA_ARGS__)
+  #define PRINTLN(fmt_str, ...) \
+    ::sycl::khr::println<fmt_str>(__VA_ARGS__)
   #define RUN(...)                                         \
     q.submit([&](::sycl::handler &cgh) {                   \
       cgh.single_task([=]() { __VA_ARGS__; });             \
@@ -243,6 +248,26 @@ int main() {
   RUN(PRINT("{:{}.{}f}\n", 3.14, 15, 6));        // width=15, precision=6
   RUN(PRINT("{0:{1}x}\n", 255, 10));             // positional + dynamic width
   RUN(PRINT("{0:{1}.{2}f}\n", 3.14, 20, 4));     // positional + both dynamic
+
+  // =================================================================
+  // 24. println
+  // =================================================================
+  RUN(PRINTLN("hello println"));
+  RUN(PRINTLN("{} + {} = {}", 1, 2, 3));
+  RUN(PRINTLN("{:08x}", 255));
+
+  // =================================================================
+  // 25. Dynamic char (runtime, not compile-time constant)
+  // =================================================================
+  RUN({
+    volatile char c = 'Q';
+    PRINT("{}\n", static_cast<char>(c));
+  });
+  {
+    const char *env = std::getenv("FMT_SYCL_TEST_STR");
+    if (!env) env = "fallback";
+    RUN(PRINT("{}\n", env));
+  }
 
   return 0;
 }

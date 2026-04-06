@@ -4,7 +4,7 @@
 // specifiers, then forwards to sycl::ext::oneapi::experimental::printf.
 //
 // Usage:
-//   fmt::sycl::print<"{} + {} = {}">(a, b, c);
+//   sycl::khr::print<"{} + {} = {}">(a, b, c);
 //   FMT_PRINT("{} + {} = {}", a, b, c);   // macro for nicer syntax
 
 #pragma once
@@ -28,8 +28,8 @@
 
 #include "dragonbox.hpp"
 
-namespace fmt {
 namespace sycl {
+namespace khr {
 namespace detail {
 
 // ============================================================
@@ -1017,8 +1017,27 @@ inline void print(Args... args) {
   detail::print_impl<Fmt, 0, 0>(args...);
 }
 
+namespace detail {
+template <fixed_string Fmt>
+consteval auto append_newline() {
+  constexpr size_t len = flen(Fmt);
+  fixed_string<len + 2> result; // +1 for '\n', +1 for '\0'
+  for (size_t i = 0; i < len; ++i)
+    result.data[i] = Fmt[i];
+  result.data[len] = '\n';
+  result.data[len + 1] = '\0';
+  return result;
+}
+} // namespace detail
+
+template <detail::fixed_string Fmt, typename... Args>
+inline void println(Args... args) {
+  print<detail::append_newline<Fmt>()>(args...);
+}
+
+} // namespace khr
 } // namespace sycl
-} // namespace fmt
 
 // Convenience macro — nicer syntax without explicit template angle brackets
-#define FMT_PRINT(fmtstr, ...) ::fmt::sycl::print<fmtstr>(__VA_ARGS__)
+#define FMT_PRINT(fmtstr, ...) ::sycl::khr::print<fmtstr>(__VA_ARGS__)
+#define FMT_PRINTLN(fmtstr, ...) ::sycl::khr::println<fmtstr>(__VA_ARGS__)

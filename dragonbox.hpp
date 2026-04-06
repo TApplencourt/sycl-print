@@ -12,8 +12,8 @@
 #include <cstdint>
 #include <limits>
 
-namespace fmt {
 namespace sycl {
+namespace khr {
 namespace dragonbox {
 
 // ============================================================
@@ -663,5 +663,5 @@ inline auto format_shortest(char *buf, T value) -> int {
 }
 
 } // namespace dragonbox
+} // namespace khr
 } // namespace sycl
-} // namespace fmt
