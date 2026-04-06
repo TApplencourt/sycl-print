@@ -13,6 +13,9 @@
 #include <limits>
 
 namespace sycl {
+#if !FMT_SYCL_ACPP
+inline namespace _V1 {
+#endif
 namespace khr {
 namespace dragonbox {
 
@@ -664,4 +667,7 @@ inline auto format_shortest(char *buf, T value) -> int {
 
 } // namespace dragonbox
 } // namespace khr
+#if !FMT_SYCL_ACPP
+} // namespace _V1
+#endif
 } // namespace sycl

@@ -29,6 +29,9 @@
 #include "dragonbox.hpp"
 
 namespace sycl {
+#if !FMT_SYCL_ACPP
+inline namespace _V1 {
+#endif
 namespace khr {
 namespace detail {
 
@@ -1036,6 +1039,9 @@ inline void println(Args... args) {
 }
 
 } // namespace khr
+#if !FMT_SYCL_ACPP
+} // namespace _V1
+#endif
 } // namespace sycl
 
 // Convenience macro — nicer syntax without explicit template angle brackets
