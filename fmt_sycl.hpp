@@ -33,7 +33,7 @@ namespace sycl {
 inline namespace _V1 {
 #endif
 namespace khr {
-namespace detail {
+namespace print_detail {
 
 // ============================================================
 // fixed_string — compile-time string usable as NTTP
@@ -1009,18 +1009,18 @@ inline void print_impl(Args... args) {
   }
 }
 
-} // namespace detail
+} // namespace print_detail
 
 // ============================================================
 // Public API
 // ============================================================
 
-template <detail::fixed_string Fmt, typename... Args>
+template <print_detail::fixed_string Fmt, typename... Args>
 inline void print(Args... args) {
-  detail::print_impl<Fmt, 0, 0>(args...);
+  print_detail::print_impl<Fmt, 0, 0>(args...);
 }
 
-namespace detail {
+namespace print_detail {
 template <fixed_string Fmt>
 consteval auto append_newline() {
   constexpr size_t len = flen(Fmt);
@@ -1031,11 +1031,11 @@ consteval auto append_newline() {
   result.data[len + 1] = '\0';
   return result;
 }
-} // namespace detail
+} // namespace print_detail
 
-template <detail::fixed_string Fmt, typename... Args>
+template <print_detail::fixed_string Fmt, typename... Args>
 inline void println(Args... args) {
-  print<detail::append_newline<Fmt>()>(args...);
+  print<print_detail::append_newline<Fmt>()>(args...);
 }
 
 } // namespace khr
