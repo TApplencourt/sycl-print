@@ -263,7 +263,7 @@ inline void print_arg_default(T arg) {
 consteval bool is_type_char(char c) {
   return c == 'd' || c == 'x' || c == 'X' || c == 'o' ||
          c == 'b' || c == 'B' ||
-         c == 'f' || c == 'e' || c == 'E' ||
+         c == 'f' || c == 'F' || c == 'e' || c == 'E' ||
          c == 'g' || c == 'G' ||
          c == 'a' || c == 'A' ||
          c == 'c' || c == 's' || c == 'p';
@@ -755,7 +755,7 @@ consteval bool is_int_format(char c) {
 }
 
 consteval bool is_float_format(char c) {
-  return c == 'f' || c == 'e' || c == 'E' ||
+  return c == 'f' || c == 'F' || c == 'e' || c == 'E' ||
          c == 'g' || c == 'G' || c == 'a' || c == 'A';
 }
 
