@@ -281,7 +281,17 @@ int main() {
   {
     const char *env = std::getenv("FMT_SYCL_TEST_STR");
     if (!env) env = "fallback";
+#ifdef USE_STD
     RUN(PRINT("{}\n", env));
+#else
+    size_t len = 0;
+    while (env[len]) ++len;
+    ++len; // include null terminator
+    char *shared = ::sycl::malloc_shared<char>(len, q);
+    for (size_t i = 0; i < len; ++i) shared[i] = env[i];
+    RUN(PRINT("{}\n", shared));
+    ::sycl::free(shared, q);
+#endif
   }
 
   return 0;
