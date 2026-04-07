@@ -656,7 +656,8 @@ fixed_string(const char (&)[N]) -> fixed_string<N>;
 // Length of a fixed_string (excluding null terminator)
 template <size_t N>
 consteval size_t flen(const fixed_string<N> &) {
-  return N > 0 ? N - 1 : 0;
+  static_assert(N >= 1, "Implementation Error: fixed_string must include null terminator. Something did go wrong");
+  return N - 1;
 }
 
 // ============================================================
@@ -842,7 +843,7 @@ inline void print_arg_default(T arg) {
       DEVICE_PRINTF("-");
       val = -val;
     }
-    char dbuf[32];
+    char dbuf[24]; // format_shortest: max 23 chars (scientific: 1+1+16+'e'+sign+3)
     int dlen = dragonbox::format_shortest(dbuf, val);
     for (int i = 0; i < dlen; i++)
       DEVICE_PRINTF("%c", dbuf[i]);
@@ -852,6 +853,10 @@ inline void print_arg_default(T arg) {
       DEVICE_PRINTF("%s", arg);
     else
       DEVICE_PRINTF("%p", arg);
+  } else {
+    // !sizeof(U): dependent false — C++20 requires the expression to depend
+    // on a template parameter so it is only evaluated when instantiated.
+    static_assert(!sizeof(U), "print_arg_default: unsupported type");
   }
 }
 
@@ -870,6 +875,16 @@ consteval bool is_type_char(char c) {
 
 consteval bool is_align_char(char c) {
   return c == '<' || c == '>' || c == '^';
+}
+
+consteval bool is_int_format(char c) {
+  return c == 'd' || c == 'u' || c == 'x' || c == 'X' ||
+         c == 'o' || c == 'b' || c == 'B';
+}
+
+consteval bool is_float_format(char c) {
+  return c == 'f' || c == 'F' || c == 'e' || c == 'E' ||
+         c == 'g' || c == 'G' || c == 'a' || c == 'A';
 }
 
 // Parsed format spec: [[fill]align][sign][#][0][width][.precision][type]
@@ -995,7 +1010,12 @@ consteval char effective_type() {
     using P = std::remove_cv_t<std::remove_pointer_t<U>>;
     if constexpr (std::is_same_v<P, char>) return 's';
     else return 'p';
-  } else return 'd';
+  } else {
+    // !sizeof(U): dependent false — C++20 requires the expression to depend
+    // on a template parameter so it is only evaluated when instantiated.
+    static_assert(!sizeof(U), "effective_type: unsupported type");
+    return '*'; // unreachable
+  }
 }
 
 // Buffer for building printf format strings at compile time
@@ -1016,6 +1036,8 @@ struct printf_fmt_buf {
 // Build the printf format string: %[flags][width][.precision][length]type
 template <format_spec Spec, char EffType, bool Is64>
 consteval printf_fmt_buf build_printf_fmt() {
+  static_assert(is_type_char(EffType) || EffType == 'u',
+                "build_printf_fmt: EffType must be a valid format type character");
   printf_fmt_buf buf;
   buf.push('%');
 
@@ -1136,6 +1158,8 @@ inline void apply_padding_and_print(const fmt_buf &content, char fill,
 // Format unsigned integer into buffer in given base
 template <int Base, bool Upper, typename U>
 inline void uint_to_buf(fmt_buf &buf, U val) {
+  static_assert(Base == 2 || Base == 8 || Base == 10 || Base == 16,
+                "uint_to_buf: Base must be 2, 8, 10, or 16");
   if (val == 0) { buf.push('0'); return; }
   char tmp[65];
   int n = 0;
@@ -1153,6 +1177,8 @@ inline void uint_to_buf(fmt_buf &buf, U val) {
 // Full integer formatting into buffer (handles sign, prefix, zero-pad, fill)
 template <format_spec Spec, char EffType, typename T>
 inline void format_int_buf(T arg, int width = Spec.width) {
+  static_assert(is_int_format(EffType),
+                "format_int_buf: EffType must be an integer format character");
   using U = std::remove_cv_t<std::decay_t<T>>;
   using Uns = std::conditional_t<(sizeof(U) <= 4), unsigned, unsigned long long>;
   constexpr int base = (EffType == 'b' || EffType == 'B') ? 2
@@ -1226,6 +1252,8 @@ inline char hex_digit(int d, bool upper) {
 // Format hex float from IEEE 754 bits (fixes {:a} 0x prefix difference)
 template <format_spec Spec, char EffType, typename T>
 inline void format_hex_float(T arg) {
+  static_assert(EffType == 'a' || EffType == 'A',
+                "format_hex_float: EffType must be 'a' or 'A'");
   double val = static_cast<double>(arg);
   constexpr bool upper = (EffType == 'A');
 
@@ -1320,6 +1348,8 @@ inline void print_with_fill(Fn print_content, char fill, char align, int pad) {
 // Float with custom fill — print fill chars around printf output
 template <format_spec Spec, char EffType, typename T>
 inline void print_float_with_fill(T arg) {
+  static_assert(is_float_format(EffType),
+                "print_float_with_fill: EffType must be a float format character");
   double val = static_cast<double>(arg);
   constexpr format_spec inner = {
     '\0', '\0', Spec.sign, Spec.alt, false, 0, Spec.precision, Spec.type
@@ -1341,16 +1371,6 @@ inline void print_float_with_fill(T arg) {
 // ============================================================
 // print_arg_with_spec — print one arg using a parsed format spec
 // ============================================================
-
-consteval bool is_int_format(char c) {
-  return c == 'd' || c == 'u' || c == 'x' || c == 'X' ||
-         c == 'o' || c == 'b' || c == 'B';
-}
-
-consteval bool is_float_format(char c) {
-  return c == 'f' || c == 'F' || c == 'e' || c == 'E' ||
-         c == 'g' || c == 'G' || c == 'a' || c == 'A';
-}
 
 template <format_spec Spec, typename T>
 inline void print_arg_with_spec(T arg) {
