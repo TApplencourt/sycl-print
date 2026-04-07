@@ -18,7 +18,7 @@
     std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__) << '\n'
   #define RUN(...) do { __VA_ARGS__; } while (0)
 #else
-  #include "fmt_sycl.hpp"
+  #include "sycl_khr_print.hpp"
   #include <sycl/sycl.hpp>
   #define PRINT(fmt_str, ...) \
     ::sycl::khr::print<fmt_str>(__VA_ARGS__)

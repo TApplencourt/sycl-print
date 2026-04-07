@@ -28,16 +28,16 @@ build: $(ALL_BINS)
 examples_std_%: examples.cpp
 	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(WA_$*) $< -o $@
 
-examples_sycl_%: examples.cpp fmt_sycl.hpp dragonbox.hpp
+examples_sycl_%: examples.cpp sycl_khr_print.hpp
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
 
 fuzz_std_%: fuzz.cpp
 	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(WA_$*) $< -o $@
 
-fuzz_sycl_%: fuzz.cpp fmt_sycl.hpp dragonbox.hpp
+fuzz_sycl_%: fuzz.cpp sycl_khr_print.hpp
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
 
-fuzz_sycl_ffast_%: fuzz.cpp fmt_sycl.hpp dragonbox.hpp
+fuzz_sycl_ffast_%: fuzz.cpp sycl_khr_print.hpp
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(WA_$*) $< -o $@
 
 # ── Test targets ─────────────────────────────────────────────

@@ -20,7 +20,7 @@
   #define P(fmt_str, ...) \
     std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #else
-  #include "fmt_sycl.hpp"
+  #include "sycl_khr_print.hpp"
   #define P(fmt_str, ...) \
     ::sycl::khr::print<fmt_str>(__VA_ARGS__)
 #endif
