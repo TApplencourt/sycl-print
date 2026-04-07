@@ -246,9 +246,11 @@ int main() {
     double f = rand_double();
     P("i={:+d} f={:.4f}\n", i, f);
   }
+#ifndef FMT_SYCL_WA_STR
   for (int _i = 0; _i < N_ITER; _i++) {
     P("Hello {}, coucou {}\n", "world", rand_int());
   }
+#endif
   for (int _i = 0; _i < N_ITER; _i++) {
     int i = rand_int();
     double d = rand_double();
@@ -285,12 +287,14 @@ int main() {
     bool b = (rng() & 1) != 0;
     P("{:.2e} {} {:x} {} {}\n", d, i, u, c, b);
   }
+#ifndef FMT_SYCL_WA_STR
   for (int _i = 0; _i < N_ITER; _i++) {
     int v1 = rand_int(); double v2 = rand_double(); char v3 = rand_char();
     bool v4 = (rng() & 1) != 0; unsigned v5 = rand_uint();
     int64_t v6 = rand_i64();
     P("{} {} {} {} {} {} {}\n", v1, v2, v3, v4, v5, v6, "lit");
   }
+#endif
 
   // ============================================================
   // 18. Escaped braces with mixed types

@@ -67,7 +67,9 @@ int main() {
   RUN(PRINT("{}\n", 'A'));
   RUN(PRINT("{}\n", true));
   RUN(PRINT("{}\n", false));
+#ifndef FMT_SYCL_WA_STR
   RUN(PRINT("{}\n", "hello world"));
+#endif
 
   // =================================================================
   // 4. Integer type specifiers
@@ -232,7 +234,9 @@ int main() {
   // 22. Positional arguments
   // =================================================================
   RUN(PRINT("{0} {1} {0}\n", 42, 99));
+#ifndef FMT_SYCL_WA_STR
   RUN(PRINT("{1} {0}\n", "hello", "world"));
+#endif
   RUN(PRINT("{0:x} {0:d} {0:b}\n", 255));
   RUN(PRINT("{0:>10} {1:<10}\n", 42, 99));
   RUN(PRINT("{2} {0} {1}\n", 'a', 'b', 'c'));
@@ -279,6 +283,7 @@ int main() {
     volatile char c = 'Q';
     PRINT("{}\n", static_cast<char>(c));
   });
+#ifndef FMT_SYCL_WA_STR
   {
     const char *env = "cpu-char-* copied";
 #ifdef USE_STD
@@ -291,6 +296,7 @@ int main() {
     ::sycl::free(shared, q);
 #endif
   }
+#endif
 
   return 0;
 }
