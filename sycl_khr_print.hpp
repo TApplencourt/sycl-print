@@ -1092,7 +1092,7 @@ template <format_spec Spec, char EffType, int N = 0>
 inline void dispatch_float_prec(double val, int prec) {
   if (prec == N) {
     constexpr format_spec resolved = {
-        '\0', '\0', Spec.sign, Spec.alt, false, 0, N, Spec.type, -1, -1, 0};
+        .sign = Spec.sign, .alt = Spec.alt, .precision = N, .type = Spec.type};
     constexpr auto pfmt = build_printf_fmt<resolved, EffType, false>();
     emit_printf_with_arg<pfmt>(val);
   } else if constexpr (N < 20) {
@@ -1100,7 +1100,7 @@ inline void dispatch_float_prec(double val, int prec) {
   } else {
     // Cap at 20
     constexpr format_spec resolved = {
-        '\0', '\0', Spec.sign, Spec.alt, false, 0, 20, Spec.type, -1, -1, 0};
+        .sign = Spec.sign, .alt = Spec.alt, .precision = 20, .type = Spec.type};
     constexpr auto pfmt = build_printf_fmt<resolved, EffType, false>();
     emit_printf_with_arg<pfmt>(val);
   }
@@ -1352,7 +1352,7 @@ inline void print_float_with_fill(T arg) {
                 "print_float_with_fill: EffType must be a float format character");
   double val = static_cast<double>(arg);
   constexpr format_spec inner = {
-    '\0', '\0', Spec.sign, Spec.alt, false, 0, Spec.precision, Spec.type
+    .sign = Spec.sign, .alt = Spec.alt, .precision = Spec.precision, .type = Spec.type
   };
   constexpr auto pfmt = build_printf_fmt<inner, EffType, false>();
 
