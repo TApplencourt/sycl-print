@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 #ifdef USE_STD
   #include <format>
@@ -244,15 +245,15 @@ int main() {
   RUN(PRINT("{:{}d}\n", 42, 10));                // width=10
   RUN(PRINT("{:{}d}\n", 42, 1));                 // width=1 (smaller than content)
   RUN(PRINT("{:.{}f}\n", 3.14159, 2));           // precision=2
-  RUN(PRINT("{:.{}f}\n", 3.14159, 0));           // precision=0
-  RUN(PRINT("{:{}.{}f}\n", 3.14, 15, 6));        // width=15, precision=6
+  RUN(PRINT("{:.{}f}\n", 4.14159, 0));           // precision=0
+  RUN(PRINT("{:{}.{}f}\n", 5.14, 15, 6));        // width=15, precision=6
   RUN(PRINT("{0:{1}x}\n", 255, 10));             // positional + dynamic width
-  RUN(PRINT("{0:{1}.{2}f}\n", 3.14, 20, 4));     // positional + both dynamic
+  RUN(PRINT("{0:{2}.{1}f}\n", 6.14, 4, 20));     // positional + both dynamic
 
   // =================================================================
   // 24. {:F} — uppercase INF/NAN
   // =================================================================
-  RUN(PRINT("{:F}\n", 3.14));
+  RUN(PRINT("{:F}\n", 7.14));
   RUN(PRINT("{:F}\n", 1.0 / 0.0));
   RUN(PRINT("{:F}\n", -1.0 / 0.0));
 
@@ -279,16 +280,13 @@ int main() {
     PRINT("{}\n", static_cast<char>(c));
   });
   {
-    const char *env = std::getenv("FMT_SYCL_TEST_STR");
-    if (!env) env = "fallback";
+    const char *env = "cpu-char-* copied";
 #ifdef USE_STD
     RUN(PRINT("{}\n", env));
 #else
-    size_t len = 0;
-    while (env[len]) ++len;
-    ++len; // include null terminator
+    size_t len = std::strlen(env) + 1;
     char *shared = ::sycl::malloc_shared<char>(len, q);
-    for (size_t i = 0; i < len; ++i) shared[i] = env[i];
+    std::memcpy(shared, env, len);
     RUN(PRINT("{}\n", shared));
     ::sycl::free(shared, q);
 #endif
