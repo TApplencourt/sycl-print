@@ -736,50 +736,40 @@ consteval placeholder_info find_placeholder() {
 // Literal segment: unescape {{ → {, }} → }, and % → %%
 // ============================================================
 
+// Unified literal walker: unescape {{ → {, }} → }, and % → %%.
+// When out == nullptr, counts output size; otherwise writes to out.
 template <fixed_string Fmt, size_t Begin, size_t End>
-consteval size_t literal_out_size() {
-  size_t n = 0;
+consteval size_t walk_literal(char *out, size_t pos = 0) {
   size_t i = Begin;
   while (i < End) {
     if (i + 1 < End && Fmt[i] == '{' && Fmt[i + 1] == '{') {
-      n++;
-      i += 2;
+      if (out) out[pos] = '{';
+      pos++; i += 2;
     } else if (i + 1 < End && Fmt[i] == '}' && Fmt[i + 1] == '}') {
-      n++;
-      i += 2;
+      if (out) out[pos] = '}';
+      pos++; i += 2;
     } else if (Fmt[i] == '%') {
-      n += 2;
-      i++;
+      if (out) { out[pos] = '%'; out[pos + 1] = '%'; }
+      pos += 2; i++;
     } else {
-      n++;
-      i++;
+      if (out) out[pos] = Fmt[i];
+      pos++; i++;
     }
   }
-  return n;
+  return pos;
+}
+
+template <fixed_string Fmt, size_t Begin, size_t End>
+consteval size_t literal_out_size() {
+  return walk_literal<Fmt, Begin, End>(nullptr);
 }
 
 template <fixed_string Fmt, size_t Begin, size_t End>
 consteval auto make_literal() {
   constexpr size_t N = literal_out_size<Fmt, Begin, End>() + 1;
   fixed_string<N> result{};
-  size_t out = 0;
-  size_t i = Begin;
-  while (i < End) {
-    if (i + 1 < End && Fmt[i] == '{' && Fmt[i + 1] == '{') {
-      result.data[out++] = '{';
-      i += 2;
-    } else if (i + 1 < End && Fmt[i] == '}' && Fmt[i + 1] == '}') {
-      result.data[out++] = '}';
-      i += 2;
-    } else if (Fmt[i] == '%') {
-      result.data[out++] = '%';
-      result.data[out++] = '%';
-      i++;
-    } else {
-      result.data[out++] = Fmt[i++];
-    }
-  }
-  result.data[out] = '\0';
+  walk_literal<Fmt, Begin, End>(result.data);
+  result.data[N - 1] = '\0';
   return result;
 }
 
@@ -1645,23 +1635,6 @@ consteval size_t append_printf_spec(char *out, size_t pos) {
   return pos;
 }
 
-// Append a literal segment (with {{ → {, }} → }, % → %% escaping).
-template <fixed_string Fmt, size_t Begin, size_t End>
-consteval size_t append_literal(char *out, size_t pos) {
-  size_t i = Begin;
-  while (i < End) {
-    if (i + 1 < End && Fmt[i] == '{' && Fmt[i + 1] == '{') {
-      out[pos++] = '{'; i += 2;
-    } else if (i + 1 < End && Fmt[i] == '}' && Fmt[i + 1] == '}') {
-      out[pos++] = '}'; i += 2;
-    } else if (Fmt[i] == '%') {
-      out[pos++] = '%'; out[pos++] = '%'; i++;
-    } else {
-      out[pos++] = Fmt[i++];
-    }
-  }
-  return pos;
-}
 
 // Two-pass compile-time builder: first compute size, then fill.
 // Pass 1: compute total size of the combined printf format string.
@@ -1694,9 +1667,9 @@ template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
 consteval size_t fill_combined_fmt(char *out, size_t pos) {
   constexpr auto info = find_placeholder<Fmt, Pos>();
   if constexpr (!info.found) {
-    return append_literal<Fmt, Pos, flen(Fmt)>(out, pos);
+    return walk_literal<Fmt, Pos, flen(Fmt)>(out, pos);
   } else {
-    pos = append_literal<Fmt, Pos, info.open>(out, pos);
+    pos = walk_literal<Fmt, Pos, info.open>(out, pos);
     constexpr bool is_auto = (info.index < 0);
     constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
     using U = std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>;
