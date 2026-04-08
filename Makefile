@@ -8,6 +8,10 @@ OPT_LEVELS := O0 O1 O2 O3
 # -DWA at O0: work around DPC++ bug (string literal through pointer segfaults)
 WA_O0 := -DFMT_SYCL_WA_STR
 
+# Allow non-atomic format features (dragonbox {}, {:b}, {:a}, {:^}, etc.)
+# Without this, only atomic + std::format-compatible features are allowed.
+RELAX_ATOMICITY := -DFMT_SYCL_RELAX_ATOMICITY
+
 # Derived binary names
 EXAMPLES_STD  := $(addprefix examples_std_,$(OPT_LEVELS))
 EXAMPLES_SYCL := $(addprefix examples_sycl_,$(OPT_LEVELS))
@@ -27,19 +31,19 @@ all: test
 build: $(ALL_BINS)
 
 examples_std_%: test_example.cpp
-	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(WA_$*) $< -o $@
+	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
 
 examples_sycl_%: test_example.cpp sycl_khr_print.hpp
-	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
+	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
 
 fuzz_std_%: fuzz.cpp
-	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(WA_$*) $< -o $@
+	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
 
 fuzz_sycl_%: fuzz.cpp sycl_khr_print.hpp
-	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
+	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
 
 fuzz_sycl_ffast_%: fuzz.cpp sycl_khr_print.hpp
-	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(WA_$*) $< -o $@
+	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
 
 interleave_std: test_interleave.cpp
 	$(CXX) $(CXXFLAGS) -DUSE_STD $< -o $@

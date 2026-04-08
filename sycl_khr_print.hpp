@@ -5,7 +5,7 @@
 //
 // Usage:
 //   sycl::khr::print<"{} + {} = {}">(a, b, c);
-//   FMT_PRINT("{} + {} = {}", a, b, c);   // macro for nicer syntax
+//   KHR_PRINT("{} + {} = {}", a, b, c);   // macro for nicer syntax
 
 #pragma once
 
@@ -46,6 +46,7 @@ namespace print_detail {
 // Produces the shortest decimal representation of float/double.
 // Uses compressed cache tables (216 bytes) — GPU-friendly.
 
+#ifdef FMT_SYCL_RELAX_ATOMICITY
 namespace dragonbox {
 
 struct uint128 {
@@ -633,6 +634,7 @@ inline auto format_shortest(char *buf, T value) -> int {
 }
 
 } // namespace dragonbox
+#endif // FMT_SYCL_RELAX_ATOMICITY
 
 // ============================================================
 // fixed_string — compile-time string usable as NTTP
@@ -837,6 +839,7 @@ inline void print_arg_default(T arg) {
       DEVICE_PRINTF(
           "%llu", static_cast<unsigned long long>(arg));
   } else if constexpr (std::is_floating_point_v<U>) {
+#ifdef FMT_SYCL_RELAX_ATOMICITY
     U val = arg;
     using bits_t = std::conditional_t<std::is_same_v<U, float>, uint32_t, uint64_t>;
     bool neg = __builtin_bit_cast(bits_t, val) >> (sizeof(bits_t) * 8 - 1);
@@ -848,6 +851,9 @@ inline void print_arg_default(T arg) {
     int dlen = dragonbox::format_shortest(dbuf, val);
     for (int i = 0; i < dlen; i++)
       DEVICE_PRINTF("%c", dbuf[i]);
+#else
+    DEVICE_PRINTF("%g", static_cast<double>(arg));
+#endif
   } else if constexpr (std::is_pointer_v<U>) {
     using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
     if constexpr (std::is_same_v<Pointee, char>)
@@ -1003,7 +1009,8 @@ consteval format_spec parse_spec() {
 template <typename U, char SpecType>
 consteval char effective_type() {
   if (SpecType != '\0') return SpecType;
-  if constexpr (std::is_same_v<U, char>) return 'c';
+  if constexpr (std::is_same_v<U, bool>) return 's';
+  else if constexpr (std::is_same_v<U, char>) return 'c';
   else if constexpr (std::is_floating_point_v<U>) return 'g';
   else if constexpr (std::is_integral_v<U> && std::is_signed_v<U>) return 'd';
   else if constexpr (std::is_integral_v<U> && std::is_unsigned_v<U>) return 'u';
@@ -1414,9 +1421,12 @@ inline void print_arg_with_spec(T arg) {
     apply_padding_and_print(content, Spec.fill_or(),
                             Spec.align_or(), Spec.width);
   } else if constexpr (needs_buf && etype == 's') {
-    // Buffer path — string with fill/center
+    // Buffer path — string/bool with fill/center
     fmt_buf content;
-    content.push_str(arg);
+    if constexpr (std::is_same_v<U, bool>)
+      push_bool(content, arg);
+    else
+      content.push_str(arg);
     apply_padding_and_print(content, Spec.fill_or(),
                             Spec.align_or('<'), Spec.width);
   } else if constexpr (needs_buf && is_float_format(etype)) {
@@ -1589,13 +1599,13 @@ inline void print_impl(Args... args) {
 // printf specifier (i.e. does NOT need the buffer/dragonbox path).
 template <typename U, format_spec Spec>
 consteval bool is_printf_compatible() {
-  // Default bool → "true"/"false" needs buffer
-  if constexpr (std::is_same_v<U, bool> &&
-                (Spec.type == '\0' || Spec.type == 's'))
-    return false;
-  // Default float → dragonbox, not printf
+  // Bool default/s → %s with "true"/"false" literal — printf-compatible
+  // (string literals live in constant memory, safe for SYCL printf)
+  // With UNFORCE_ATOMICITY: default float uses dragonbox (not printf-compatible)
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   if constexpr (std::is_floating_point_v<U> && Spec.type == '\0')
     return false;
+#endif
 
   constexpr char etype = effective_type<U, Spec.type>();
   // Binary, hex-float, center, custom fill, signed hex/oct, alt hex
@@ -1731,7 +1741,9 @@ consteval auto build_combined_printf_fmt() {
 template <char EffType, typename T>
 inline auto printf_cast(T arg) {
   using U = std::remove_cv_t<std::decay_t<T>>;
-  if constexpr (EffType == 'c')
+  if constexpr (std::is_same_v<U, bool> && EffType == 's')
+    return arg ? "true" : "false";
+  else if constexpr (EffType == 'c')
     return static_cast<char>(arg);
   else if constexpr (EffType == 'd') {
     if constexpr (sizeof(U) <= 4) return static_cast<int>(arg);
@@ -1806,6 +1818,13 @@ inline void print(Args... args) {
   } else if constexpr (print_detail::all_printf_compatible<Fmt, 0, 0, Args...>()) {
     print_detail::print_combined_dispatch<Fmt>(args...);
   } else {
+#ifndef FMT_SYCL_RELAX_ATOMICITY
+    static_assert(print_detail::all_printf_compatible<Fmt, 0, 0, Args...>(),
+        "This format string uses non-atomic features ({:b}, {:a}, {:^}, "
+        "custom fill, {:#x} with signed int, etc.). "
+        "Define FMT_SYCL_RELAX_ATOMICITY to enable (output may interleave "
+        "across work-items).");
+#endif
     print_detail::print_impl<Fmt, 0, 0>(args...);
   }
 }
@@ -1835,5 +1854,5 @@ inline void println(Args... args) {
 } // namespace sycl
 
 // Convenience macro — nicer syntax without explicit template angle brackets
-#define FMT_PRINT(fmtstr, ...) ::sycl::khr::print<fmtstr>(__VA_ARGS__)
-#define FMT_PRINTLN(fmtstr, ...) ::sycl::khr::println<fmtstr>(__VA_ARGS__)
+#define KHR_PRINT(fmtstr, ...) ::sycl::khr::print<fmtstr>(__VA_ARGS__)
+#define KHR_PRINTLN(fmtstr, ...) ::sycl::khr::println<fmtstr>(__VA_ARGS__)

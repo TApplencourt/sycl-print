@@ -42,7 +42,30 @@ int main() {
 
   // 4. Mixed string + int
   TEST("{} has {} items", "cart", 7);
-  TEST("name={} age={} city={}", "alice", 30, "paris");
+
+  // 5. Default float
+  TEST("pi={}", 3.14f);
+
+  // 6. Bool
+  TEST("flag={}", true);
+  TEST("a={} b={}", true, false);
+
+  // 7. Mixed string + int + float + bool
+  TEST("name={} age={} score={} ok={}", "alice", 30, 9.5f, true);
+
+  // 8. Width and alignment
+  TEST("{:10d}", 42);
+  TEST("{:<10d}", 42);
+  TEST("{:>10d}", 42);
+  TEST("{:010d}", -42);
+
+  // 9. Float with precision and width
+  TEST("{:.2f}", 3.14159);
+  TEST("{:+15.6f}", 3.14);
+  TEST("{:010.3e}", 0.000123456);
+
+  // 10. Mixed specs
+  TEST("x={:06x} f={:+.2f} d={:>8d}", 255u, -3.14, 42);
 
   return 0;
 }

@@ -287,7 +287,8 @@ int main() {
     bool b = (rng() & 1) != 0;
     P("{:.2e} {} {:x} {} {}\n", d, i, u, c, b);
   }
-#ifndef FMT_SYCL_WA_STR
+#if !defined(FMT_SYCL_WA_STR) && defined(FMT_SYCL_RELAX_ATOMICITY)
+  // {} with double (v2) requires dragonbox for shortest-decimal
   for (int _i = 0; _i < N_ITER; _i++) {
     int v1 = rand_int(); double v2 = rand_double(); char v3 = rand_char();
     bool v4 = (rng() & 1) != 0; unsigned v5 = rand_uint();
