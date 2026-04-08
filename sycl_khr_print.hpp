@@ -803,6 +803,19 @@ inline void emit_literal() {
   }
 }
 
+// Cast an integer to its printf-compatible type (int/long long or unsigned variants)
+template <typename U>
+inline auto signed_int_cast(U arg) {
+  if constexpr (sizeof(U) <= 4) return static_cast<int>(arg);
+  else return static_cast<long long>(arg);
+}
+
+template <typename U>
+inline auto unsigned_int_cast(U arg) {
+  if constexpr (sizeof(U) <= 4) return static_cast<unsigned>(arg);
+  else return static_cast<unsigned long long>(arg);
+}
+
 // ============================================================
 // print_arg_default — print one arg with its default specifier
 // ============================================================
@@ -817,19 +830,11 @@ inline void print_arg_default(T arg) {
   } else if constexpr (std::is_same_v<U, char>) {
     DEVICE_PRINTF("%c", arg);
   } else if constexpr (std::is_integral_v<U> && std::is_signed_v<U>) {
-    if constexpr (sizeof(U) <= 4)
-      DEVICE_PRINTF("%d",
-                                                static_cast<int>(arg));
-    else
-      DEVICE_PRINTF(
-          "%lld", static_cast<long long>(arg));
+    if constexpr (sizeof(U) <= 4) DEVICE_PRINTF("%d", signed_int_cast(arg));
+    else DEVICE_PRINTF("%lld", signed_int_cast(arg));
   } else if constexpr (std::is_integral_v<U> && std::is_unsigned_v<U>) {
-    if constexpr (sizeof(U) <= 4)
-      DEVICE_PRINTF("%u",
-                                                static_cast<unsigned>(arg));
-    else
-      DEVICE_PRINTF(
-          "%llu", static_cast<unsigned long long>(arg));
+    if constexpr (sizeof(U) <= 4) DEVICE_PRINTF("%u", unsigned_int_cast(arg));
+    else DEVICE_PRINTF("%llu", unsigned_int_cast(arg));
   } else if constexpr (std::is_floating_point_v<U>) {
 #ifdef FMT_SYCL_RELAX_ATOMICITY
     U val = arg;
@@ -1432,16 +1437,10 @@ inline void print_arg_with_spec(T arg) {
     if constexpr (etype == 'c') {
       emit_printf_with_arg<pfmt>(static_cast<char>(arg));
     } else if constexpr (etype == 'd') {
-      if constexpr (sizeof(U) <= 4)
-        emit_printf_with_arg<pfmt>(static_cast<int>(arg));
-      else
-        emit_printf_with_arg<pfmt>(static_cast<long long>(arg));
+      emit_printf_with_arg<pfmt>(signed_int_cast(arg));
     } else if constexpr (etype == 'u' || etype == 'x' || etype == 'X' ||
                           etype == 'o') {
-      if constexpr (sizeof(U) <= 4)
-        emit_printf_with_arg<pfmt>(static_cast<unsigned>(arg));
-      else
-        emit_printf_with_arg<pfmt>(static_cast<unsigned long long>(arg));
+      emit_printf_with_arg<pfmt>(unsigned_int_cast(arg));
     } else if constexpr (is_float_format(etype)) {
       emit_printf_with_arg<pfmt>(static_cast<double>(arg));
     } else {
@@ -1735,12 +1734,10 @@ inline auto printf_cast(T arg) {
   else if constexpr (EffType == 'c')
     return static_cast<char>(arg);
   else if constexpr (EffType == 'd') {
-    if constexpr (sizeof(U) <= 4) return static_cast<int>(arg);
-    else return static_cast<long long>(arg);
+    return signed_int_cast(arg);
   } else if constexpr (EffType == 'u' || EffType == 'x' || EffType == 'X' ||
                         EffType == 'o') {
-    if constexpr (sizeof(U) <= 4) return static_cast<unsigned>(arg);
-    else return static_cast<unsigned long long>(arg);
+    return unsigned_int_cast(arg);
   } else if constexpr (is_float_format(EffType))
     return static_cast<double>(arg);
   else
