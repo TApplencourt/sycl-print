@@ -22,6 +22,7 @@
 #endif
 
 #include <algorithm> // std::copy_n
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -806,6 +807,11 @@ inline auto unsigned_int_cast(U arg) {
   else return static_cast<unsigned long long>(arg);
 }
 
+// Types supported by sycl::khr::print
+template <typename T>
+concept sycl_printable = std::same_as<T, bool> || std::same_as<T, char>
+    || std::integral<T> || std::floating_point<T> || std::is_pointer_v<T>;
+
 // ============================================================
 // print_arg_default — print one arg with its default specifier
 // ============================================================
@@ -814,18 +820,18 @@ template <typename T>
 inline void print_arg_default(T arg) {
   using U = std::decay_t<T>;
 
-  if constexpr (std::is_same_v<U, bool>) {
+  if constexpr (std::same_as<U, bool>) {
     if (arg) DEVICE_PRINTF("true");
     else DEVICE_PRINTF("false");
-  } else if constexpr (std::is_same_v<U, char>) {
+  } else if constexpr (std::same_as<U, char>) {
     DEVICE_PRINTF("%c", arg);
-  } else if constexpr (std::is_integral_v<U> && std::is_signed_v<U>) {
+  } else if constexpr (std::signed_integral<U>) {
     if constexpr (sizeof(U) <= 4) DEVICE_PRINTF("%d", signed_int_cast(arg));
     else DEVICE_PRINTF("%lld", signed_int_cast(arg));
-  } else if constexpr (std::is_integral_v<U> && std::is_unsigned_v<U>) {
+  } else if constexpr (std::unsigned_integral<U>) {
     if constexpr (sizeof(U) <= 4) DEVICE_PRINTF("%u", unsigned_int_cast(arg));
     else DEVICE_PRINTF("%llu", unsigned_int_cast(arg));
-  } else if constexpr (std::is_floating_point_v<U>) {
+  } else if constexpr (std::floating_point<U>) {
 #ifdef FMT_SYCL_RELAX_ATOMICITY
     U val = arg;
     using bits_t = std::conditional_t<std::is_same_v<U, float>, uint32_t, uint64_t>;
@@ -843,14 +849,10 @@ inline void print_arg_default(T arg) {
 #endif
   } else if constexpr (std::is_pointer_v<U>) {
     using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
-    if constexpr (std::is_same_v<Pointee, char>)
+    if constexpr (std::same_as<Pointee, char>)
       DEVICE_PRINTF("%s", arg);
     else
       DEVICE_PRINTF("%p", arg);
-  } else {
-    // !sizeof(U): dependent false — C++20 requires the expression to depend
-    // on a template parameter so it is only evaluated when instantiated.
-    static_assert(!sizeof(U), "print_arg_default: unsupported type");
   }
 }
 
@@ -996,20 +998,15 @@ consteval format_spec parse_spec() {
 template <typename U, char SpecType>
 consteval char effective_type() {
   if (SpecType != '\0') return SpecType;
-  if constexpr (std::is_same_v<U, bool>) return 's';
-  else if constexpr (std::is_same_v<U, char>) return 'c';
-  else if constexpr (std::is_floating_point_v<U>) return 'g';
-  else if constexpr (std::is_integral_v<U> && std::is_signed_v<U>) return 'd';
-  else if constexpr (std::is_integral_v<U> && std::is_unsigned_v<U>) return 'u';
+  if constexpr (std::same_as<U, bool>) return 's';
+  else if constexpr (std::same_as<U, char>) return 'c';
+  else if constexpr (std::floating_point<U>) return 'g';
+  else if constexpr (std::signed_integral<U>) return 'd';
+  else if constexpr (std::unsigned_integral<U>) return 'u';
   else if constexpr (std::is_pointer_v<U>) {
     using P = std::remove_cv_t<std::remove_pointer_t<U>>;
-    if constexpr (std::is_same_v<P, char>) return 's';
+    if constexpr (std::same_as<P, char>) return 's';
     else return 'p';
-  } else {
-    // !sizeof(U): dependent false — C++20 requires the expression to depend
-    // on a template parameter so it is only evaluated when instantiated.
-    static_assert(!sizeof(U), "effective_type: unsupported type");
-    return '*'; // unreachable
   }
 }
 
@@ -1185,9 +1182,9 @@ inline void format_int_buf(T arg, int width = Spec.width) {
   // Absolute value + sign
   bool neg = false;
   Uns uval;
-  if constexpr (std::is_same_v<U, bool>) {
+  if constexpr (std::same_as<U, bool>) {
     uval = static_cast<Uns>(arg);
-  } else if constexpr (std::is_signed_v<U>) {
+  } else if constexpr (std::signed_integral<U>) {
     if (arg < 0) { neg = true; uval = Uns(0) - static_cast<Uns>(arg); }
     else uval = static_cast<Uns>(arg);
   } else {
@@ -1373,7 +1370,7 @@ inline void print_arg_with_spec(T arg, int dyn_w = Spec.width, int dyn_p = Spec.
   using U = std::decay_t<T>;
 
   // Bool without explicit type (or {:s}) → "true"/"false"
-  if constexpr (std::is_same_v<U, bool> &&
+  if constexpr (std::same_as<U, bool> &&
                 (Spec.type == '\0' || Spec.type == 's')) {
     fmt_buf content;
     push_bool(content, arg);
@@ -1385,7 +1382,7 @@ inline void print_arg_with_spec(T arg, int dyn_w = Spec.width, int dyn_p = Spec.
   constexpr char etype = effective_type<U, Spec.type>();
 
   // Determine if buffer path is needed
-  constexpr bool is_signed_int = std::is_signed_v<U> && !std::is_same_v<U, bool>;
+  constexpr bool is_signed_int = std::signed_integral<U>;
   constexpr bool needs_buf = Dynamic ||
       (etype == 'b' || etype == 'B') ||
       (Spec.align == '^') ||
@@ -1408,7 +1405,7 @@ inline void print_arg_with_spec(T arg, int dyn_w = Spec.width, int dyn_p = Spec.
                             Spec.align_or(), dyn_w);
   } else if constexpr (needs_buf && etype == 's') {
     fmt_buf content;
-    if constexpr (std::is_same_v<U, bool>)
+    if constexpr (std::same_as<U, bool>)
       push_bool(content, arg);
     else
       content.push_str(arg);
@@ -1540,7 +1537,7 @@ consteval bool is_printf_compatible() {
   // (string literals live in constant memory, safe for SYCL printf)
   // With UNFORCE_ATOMICITY: default float uses dragonbox (not printf-compatible)
 #ifdef FMT_SYCL_RELAX_ATOMICITY
-  if constexpr (std::is_floating_point_v<U> && Spec.type == '\0')
+  if constexpr (std::floating_point<U> && Spec.type == '\0')
     return false;
 #endif
 
@@ -1550,7 +1547,7 @@ consteval bool is_printf_compatible() {
   if (etype == 'a' || etype == 'A') return false;
   if (Spec.align == '^') return false;
   if (Spec.fill != '\0' && Spec.fill != ' ') return false;
-  constexpr bool is_signed_int = std::is_signed_v<U> && !std::is_same_v<U, bool>;
+  constexpr bool is_signed_int = std::signed_integral<U>;
   if (is_signed_int && (etype == 'x' || etype == 'X' || etype == 'o'))
     return false;
   if (Spec.alt && (etype == 'x' || etype == 'X')) return false;
@@ -1626,7 +1623,7 @@ consteval auto build_combined_printf_fmt() {
 template <char EffType, typename T>
 inline auto printf_cast(T arg) {
   using U = std::decay_t<T>;
-  if constexpr (std::is_same_v<U, bool> && EffType == 's')
+  if constexpr (std::same_as<U, bool> && EffType == 's')
     return arg ? "true" : "false";
   else if constexpr (EffType == 'c')
     return static_cast<char>(arg);
@@ -1692,7 +1689,7 @@ inline void print_combined_dispatch(Args... args) {
 // Public API
 // ============================================================
 
-template <print_detail::fixed_string Fmt, typename... Args>
+template <print_detail::fixed_string Fmt, print_detail::sycl_printable... Args>
 inline void print(Args... args) {
   if constexpr (sizeof...(Args) == 0) {
     // No args — just emit the literal
@@ -1724,7 +1721,7 @@ consteval auto append_newline() {
 }
 } // namespace print_detail
 
-template <print_detail::fixed_string Fmt, typename... Args>
+template <print_detail::fixed_string Fmt, print_detail::sycl_printable... Args>
 inline void println(Args... args) {
   print<print_detail::append_newline<Fmt>()>(args...);
 }
