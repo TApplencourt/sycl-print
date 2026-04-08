@@ -14,18 +14,42 @@
 int main() {
   sycl::queue q;
   q.parallel_for(4, [=](sycl::id<1> i) {
-    KHR_PRINTLN("work-item {} says {} pi={}",
-        static_cast<int>(i), "hello", 3.14f);
+    KHR_PRINTLN("work-item {} says {}",
+        static_cast<int>(i), "hello");
   }).wait();
 }
 ```
 
 One possible ordering of the output:
 ```bash
-work-item 0 says hello pi=3.14
-work-item 2 says hello pi=3.14
-work-item 1 says hello pi=3.14
-work-item 3 says hello pi=3.14
+work-item 0 says hello
+work-item 2 says hello
+work-item 1 says hello
+work-item 3 says hello
+```
+
+## Advanced example
+
+```cpp
+#include "sycl_khr_print.hpp"
+#include <sycl/sycl.hpp>
+
+int main() {
+  sycl::queue q;
+  q.parallel_for(4, [=](sycl::id<1> i) {
+    int id = static_cast<int>(i);
+    float v = 3.14159f * (id + 1);
+    KHR_PRINTLN("format used: 'id: {{0}}, v2dp={{1:6.2f}}, v={{1:8.5f}}' -> id: {0}, v2dp={1:6.2f}, v={1:8.5f}", id, v);
+  }).wait();
+}
+```
+
+One possible ordering of the output:
+```bash
+format used: 'id: {0}, v2dp={1:6.2f}, v={1:8.5f}' -> id: 0, v2dp=  3.14, v= 3.14159
+format used: 'id: {0}, v2dp={1:6.2f}, v={1:8.5f}' -> id: 2, v2dp=  9.42, v= 9.42477
+format used: 'id: {0}, v2dp={1:6.2f}, v={1:8.5f}' -> id: 1, v2dp=  6.28, v= 6.28318
+format used: 'id: {0}, v2dp={1:6.2f}, v={1:8.5f}' -> id: 3, v2dp= 12.57, v=12.56636
 ```
 
 ## API
