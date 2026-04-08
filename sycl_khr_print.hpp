@@ -183,13 +183,6 @@ auto check_divisibility_and_divide_by_pow10(uint32_t &n) noexcept -> bool {
   return result;
 }
 
-template <int N>
-auto small_division_by_pow10(uint32_t n) noexcept -> uint32_t {
-  constexpr auto info = div_infos[N - 1];
-  constexpr uint32_t magic = (1u << info.shift) / info.divisor + 1;
-  return (n * magic) >> info.shift;
-}
-
 inline auto divide_by_10_to_kappa_plus_1(uint32_t n) noexcept -> uint32_t {
   return static_cast<uint32_t>((static_cast<uint64_t>(n) * 1374389535) >> 37);
 }
