@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <tuple>
 #include <type_traits>
 #include <utility> // std::index_sequence
 
@@ -730,15 +731,6 @@ consteval placeholder_info find_placeholder() {
   return {0, 0, 0, false, false, -1};
 }
 
-// ============================================================
-// get_arg — compile-time indexed access into parameter pack
-// ============================================================
-
-template <size_t I, typename T, typename... Rest>
-constexpr auto get_arg(T arg, Rest... rest) {
-  if constexpr (I == 0) return arg;
-  else return get_arg<I - 1>(rest...);
-}
 
 // ============================================================
 // Literal segment: unescape {{ → {, }} → }, and % → %%
@@ -817,7 +809,7 @@ inline void emit_literal() {
 
 template <typename T>
 inline void print_arg_default(T arg) {
-  using U = std::remove_cv_t<std::decay_t<T>>;
+  using U = std::decay_t<T>;
 
   if constexpr (std::is_same_v<U, bool>) {
     if (arg) DEVICE_PRINTF("true");
@@ -1187,7 +1179,7 @@ template <format_spec Spec, char EffType, typename T>
 inline void format_int_buf(T arg, int width = Spec.width) {
   static_assert(is_int_format(EffType),
                 "format_int_buf: EffType must be an integer format character");
-  using U = std::remove_cv_t<std::decay_t<T>>;
+  using U = std::decay_t<T>;
   using Uns = std::conditional_t<(sizeof(U) <= 4), unsigned, unsigned long long>;
   constexpr int base = (EffType == 'b' || EffType == 'B') ? 2
                      : (EffType == 'o')                    ? 8
@@ -1382,7 +1374,7 @@ inline void print_float_with_fill(T arg) {
 
 template <format_spec Spec, typename T>
 inline void print_arg_with_spec(T arg) {
-  using U = std::remove_cv_t<std::decay_t<T>>;
+  using U = std::decay_t<T>;
 
   // Bool without explicit type (or {:s}) → "true"/"false"
   if constexpr (std::is_same_v<U, bool> &&
@@ -1462,7 +1454,7 @@ inline void print_arg_with_spec(T arg) {
 // so we use buffer path for ints and precision dispatch for floats.
 template <format_spec Spec, typename T>
 inline void print_arg_with_spec_dynamic(T arg, int dyn_w, int dyn_p) {
-  using U = std::remove_cv_t<std::decay_t<T>>;
+  using U = std::decay_t<T>;
 
   // Bool
   if constexpr (std::is_same_v<U, bool> &&
@@ -1519,9 +1511,9 @@ inline void print_arg_with_spec_dynamic(T arg, int dyn_w, int dyn_p) {
 
 // Helper: print one arg (selected by index) with optional spec
 template <fixed_string Fmt, placeholder_info Info, size_t AutoIdx, typename... Args>
-inline void print_one_arg(Args... args) {
+inline void print_one_arg(const std::tuple<Args...> &all_args) {
   constexpr size_t idx = Info.index >= 0 ? static_cast<size_t>(Info.index) : 0;
-  auto arg = get_arg<idx>(args...);
+  auto arg = std::get<idx>(all_args);
 
   if constexpr (Info.has_spec && Info.close > Info.spec_beg) {
     // DynAutoStart: dynamic args continue after the value arg
@@ -1534,11 +1526,11 @@ inline void print_one_arg(Args... args) {
       int dyn_p = spec.precision;
       if constexpr (spec.width_arg >= 0) {
         constexpr size_t wi = static_cast<size_t>(spec.width_arg);
-        dyn_w = static_cast<int>(get_arg<wi>(args...));
+        dyn_w = static_cast<int>(std::get<wi>(all_args));
       }
       if constexpr (spec.prec_arg >= 0) {
         constexpr size_t pi = static_cast<size_t>(spec.prec_arg);
-        dyn_p = static_cast<int>(get_arg<pi>(args...));
+        dyn_p = static_cast<int>(std::get<pi>(all_args));
       }
       print_arg_with_spec_dynamic<spec>(arg, dyn_w, dyn_p);
     } else {
@@ -1551,7 +1543,7 @@ inline void print_one_arg(Args... args) {
 
 // Recursive: find next placeholder, print prefix + arg, advance
 template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
-inline void print_impl(Args... args) {
+inline void print_impl(const std::tuple<Args...> &all_args) {
   constexpr auto info = find_placeholder<Fmt, Pos>();
 
   if constexpr (!info.found) {
@@ -1577,7 +1569,7 @@ inline void print_impl(Args... args) {
         is_auto ? static_cast<int>(AutoIdx) : info.index};
 
     // Print the selected argument
-    print_one_arg<Fmt, resolved, AutoIdx>(args...);
+    print_one_arg<Fmt, resolved, AutoIdx>(all_args);
 
     // Recurse — advance AutoIdx past value + any dynamic args
     constexpr int dyn_start = static_cast<int>(AutoIdx) + 1;
@@ -1587,7 +1579,7 @@ inline void print_impl(Args... args) {
             : 0;
     constexpr size_t next_auto =
         is_auto ? AutoIdx + 1 + static_cast<size_t>(dyn_used) : AutoIdx;
-    print_impl<Fmt, info.close + 1, next_auto>(args...);
+    print_impl<Fmt, info.close + 1, next_auto>(all_args);
   }
 }
 
@@ -1632,8 +1624,7 @@ consteval bool all_printf_compatible() {
   } else {
     constexpr bool is_auto = (info.index < 0);
     constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
-    using U = std::remove_cv_t<
-        std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>>;
+    using U = std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>;
 
     constexpr format_spec spec =
         (info.has_spec && info.close > info.spec_beg)
@@ -1690,8 +1681,7 @@ consteval size_t combined_fmt_size() {
     constexpr size_t prefix = literal_out_size<Fmt, Pos, info.open>();
     constexpr bool is_auto = (info.index < 0);
     constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
-    using U = std::remove_cv_t<
-        std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>>;
+    using U = std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>;
     constexpr format_spec spec =
         (info.has_spec && info.close > info.spec_beg)
             ? parse_spec<Fmt, info.spec_beg, info.close>()
@@ -1716,8 +1706,7 @@ consteval size_t fill_combined_fmt(char *out, size_t pos) {
     pos = append_literal<Fmt, Pos, info.open>(out, pos);
     constexpr bool is_auto = (info.index < 0);
     constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
-    using U = std::remove_cv_t<
-        std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>>;
+    using U = std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>;
     constexpr format_spec spec =
         (info.has_spec && info.close > info.spec_beg)
             ? parse_spec<Fmt, info.spec_beg, info.close>()
@@ -1740,7 +1729,7 @@ consteval auto build_combined_printf_fmt() {
 // Cast an arg to its printf-compatible type.
 template <char EffType, typename T>
 inline auto printf_cast(T arg) {
-  using U = std::remove_cv_t<std::decay_t<T>>;
+  using U = std::decay_t<T>;
   if constexpr (std::is_same_v<U, bool> && EffType == 's')
     return arg ? "true" : "false";
   else if constexpr (EffType == 'c')
@@ -1783,8 +1772,7 @@ inline void walk_and_emit(std::tuple<Args...> all_args, CastArgs... cast_args) {
   } else {
     constexpr bool is_auto = (info.index < 0);
     constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
-    using U = std::remove_cv_t<
-        std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>>;
+    using U = std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>;
     constexpr format_spec spec =
         (info.has_spec && info.close > info.spec_beg)
             ? parse_spec<Fmt, info.spec_beg, info.close>()
@@ -1814,7 +1802,7 @@ template <print_detail::fixed_string Fmt, typename... Args>
 inline void print(Args... args) {
   if constexpr (sizeof...(Args) == 0) {
     // No args — just emit the literal
-    print_detail::print_impl<Fmt, 0, 0>(args...);
+    print_detail::print_impl<Fmt, 0, 0>(std::tuple<>{});
   } else if constexpr (print_detail::all_printf_compatible<Fmt, 0, 0, Args...>()) {
     print_detail::print_combined_dispatch<Fmt>(args...);
   } else {
@@ -1825,7 +1813,7 @@ inline void print(Args... args) {
         "Define FMT_SYCL_RELAX_ATOMICITY to enable (output may interleave "
         "across work-items).");
 #endif
-    print_detail::print_impl<Fmt, 0, 0>(args...);
+    print_detail::print_impl<Fmt, 0, 0>(std::tuple<Args...>(args...));
   }
 }
 
