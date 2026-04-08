@@ -837,8 +837,9 @@ inline void print_arg_default(T arg) {
       DEVICE_PRINTF(
           "%llu", static_cast<unsigned long long>(arg));
   } else if constexpr (std::is_floating_point_v<U>) {
-    double val = static_cast<double>(arg);
-    bool neg = __builtin_bit_cast(uint64_t, val) >> 63;
+    U val = arg;
+    using bits_t = std::conditional_t<std::is_same_v<U, float>, uint32_t, uint64_t>;
+    bool neg = __builtin_bit_cast(bits_t, val) >> (sizeof(bits_t) * 8 - 1);
     if (neg) {
       DEVICE_PRINTF("-");
       val = -val;
