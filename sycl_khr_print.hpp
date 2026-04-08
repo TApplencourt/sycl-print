@@ -1581,6 +1581,217 @@ inline void print_impl(Args... args) {
   }
 }
 
+// ============================================================
+// Atomic print — single DEVICE_PRINTF call for the entire format
+// ============================================================
+
+// Check at compile time if a placeholder + arg type can use a standard
+// printf specifier (i.e. does NOT need the buffer/dragonbox path).
+template <typename U, format_spec Spec>
+consteval bool is_printf_compatible() {
+  // Default bool → "true"/"false" needs buffer
+  if constexpr (std::is_same_v<U, bool> &&
+                (Spec.type == '\0' || Spec.type == 's'))
+    return false;
+  // Default float → dragonbox, not printf
+  if constexpr (std::is_floating_point_v<U> && Spec.type == '\0')
+    return false;
+
+  constexpr char etype = effective_type<U, Spec.type>();
+  // Binary, hex-float, center, custom fill, signed hex/oct, alt hex
+  if (etype == 'b' || etype == 'B') return false;
+  if (etype == 'a' || etype == 'A') return false;
+  if (Spec.align == '^') return false;
+  if (Spec.fill != '\0' && Spec.fill != ' ') return false;
+  constexpr bool is_signed_int = std::is_signed_v<U> && !std::is_same_v<U, bool>;
+  if (is_signed_int && (etype == 'x' || etype == 'X' || etype == 'o'))
+    return false;
+  if (Spec.alt && (etype == 'x' || etype == 'X')) return false;
+  // Dynamic width/precision
+  if (Spec.width_arg >= 0 || Spec.prec_arg >= 0) return false;
+  return true;
+}
+
+// Walk the entire format string at compile time. Return true if every
+// placeholder can be handled by a single printf specifier.
+template <fixed_string Fmt, size_t Pos = 0, size_t AutoIdx = 0, typename... Args>
+consteval bool all_printf_compatible() {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    return true;
+  } else {
+    constexpr bool is_auto = (info.index < 0);
+    constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
+    using U = std::remove_cv_t<
+        std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>>;
+
+    constexpr format_spec spec =
+        (info.has_spec && info.close > info.spec_beg)
+            ? parse_spec<Fmt, info.spec_beg, info.close>()
+            : format_spec{};
+
+    if constexpr (!is_printf_compatible<U, spec>()) {
+      return false;
+    } else {
+      constexpr size_t next_auto = is_auto ? AutoIdx + 1 : AutoIdx;
+      return all_printf_compatible<Fmt, info.close + 1, next_auto, Args...>();
+    }
+  }
+}
+
+// Compute the printf specifier for one placeholder and append it to a buffer.
+// Returns the new write position.
+template <typename U, format_spec Spec>
+consteval size_t append_printf_spec(char *out, size_t pos) {
+  constexpr char etype = effective_type<U, Spec.type>();
+  constexpr bool is_64 = sizeof(U) > 4;
+  constexpr auto pfmt = build_printf_fmt<Spec, etype, is_64>();
+  for (size_t i = 0; i < pfmt.len; i++)
+    out[pos++] = pfmt.data[i];
+  return pos;
+}
+
+// Append a literal segment (with {{ → {, }} → }, % → %% escaping).
+template <fixed_string Fmt, size_t Begin, size_t End>
+consteval size_t append_literal(char *out, size_t pos) {
+  size_t i = Begin;
+  while (i < End) {
+    if (i + 1 < End && Fmt[i] == '{' && Fmt[i + 1] == '{') {
+      out[pos++] = '{'; i += 2;
+    } else if (i + 1 < End && Fmt[i] == '}' && Fmt[i + 1] == '}') {
+      out[pos++] = '}'; i += 2;
+    } else if (Fmt[i] == '%') {
+      out[pos++] = '%'; out[pos++] = '%'; i++;
+    } else {
+      out[pos++] = Fmt[i++];
+    }
+  }
+  return pos;
+}
+
+// Two-pass compile-time builder: first compute size, then fill.
+// Pass 1: compute total size of the combined printf format string.
+template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
+consteval size_t combined_fmt_size() {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    return literal_out_size<Fmt, Pos, flen(Fmt)>();
+  } else {
+    constexpr size_t prefix = literal_out_size<Fmt, Pos, info.open>();
+    constexpr bool is_auto = (info.index < 0);
+    constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
+    using U = std::remove_cv_t<
+        std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>>;
+    constexpr format_spec spec =
+        (info.has_spec && info.close > info.spec_beg)
+            ? parse_spec<Fmt, info.spec_beg, info.close>()
+            : format_spec{};
+    constexpr char etype = effective_type<U, spec.type>();
+    constexpr bool is_64 = sizeof(U) > 4;
+    constexpr auto pfmt = build_printf_fmt<spec, etype, is_64>();
+
+    constexpr size_t next_auto = is_auto ? AutoIdx + 1 : AutoIdx;
+    return prefix + pfmt.len +
+           combined_fmt_size<Fmt, info.close + 1, next_auto, Args...>();
+  }
+}
+
+// Pass 2: build the combined printf format string into a fixed_string.
+template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
+consteval size_t fill_combined_fmt(char *out, size_t pos) {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    return append_literal<Fmt, Pos, flen(Fmt)>(out, pos);
+  } else {
+    pos = append_literal<Fmt, Pos, info.open>(out, pos);
+    constexpr bool is_auto = (info.index < 0);
+    constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
+    using U = std::remove_cv_t<
+        std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>>;
+    constexpr format_spec spec =
+        (info.has_spec && info.close > info.spec_beg)
+            ? parse_spec<Fmt, info.spec_beg, info.close>()
+            : format_spec{};
+    pos = append_printf_spec<U, spec>(out, pos);
+    constexpr size_t next_auto = is_auto ? AutoIdx + 1 : AutoIdx;
+    return fill_combined_fmt<Fmt, info.close + 1, next_auto, Args...>(out, pos);
+  }
+}
+
+template <fixed_string Fmt, typename... Args>
+consteval auto build_combined_printf_fmt() {
+  constexpr size_t N = combined_fmt_size<Fmt, 0, 0, Args...>() + 1;
+  fixed_string<N> result{};
+  fill_combined_fmt<Fmt, 0, 0, Args...>(result.data, 0);
+  result.data[N - 1] = '\0';
+  return result;
+}
+
+// Cast an arg to its printf-compatible type.
+template <char EffType, typename T>
+inline auto printf_cast(T arg) {
+  using U = std::remove_cv_t<std::decay_t<T>>;
+  if constexpr (EffType == 'c')
+    return static_cast<char>(arg);
+  else if constexpr (EffType == 'd') {
+    if constexpr (sizeof(U) <= 4) return static_cast<int>(arg);
+    else return static_cast<long long>(arg);
+  } else if constexpr (EffType == 'u' || EffType == 'x' || EffType == 'X' ||
+                        EffType == 'o') {
+    if constexpr (sizeof(U) <= 4) return static_cast<unsigned>(arg);
+    else return static_cast<unsigned long long>(arg);
+  } else if constexpr (is_float_format(EffType))
+    return static_cast<double>(arg);
+  else
+    return arg;
+}
+
+// Emit a combined printf format string with N args in one DEVICE_PRINTF call.
+template <fixed_string CombinedFmt, size_t... FmtIs, typename... CastArgs>
+inline void emit_combined_impl(std::index_sequence<FmtIs...>, CastArgs... args) {
+  static constexpr char s[] = {CombinedFmt.data[FmtIs]..., '\0'};
+  DEVICE_PRINTF(s, args...);
+}
+
+template <fixed_string CombinedFmt, typename... CastArgs>
+inline void emit_combined(CastArgs... args) {
+  emit_combined_impl<CombinedFmt>(
+      std::make_index_sequence<flen(CombinedFmt)>{}, args...);
+}
+
+// Walk placeholders at compile time, accumulate printf-cast args in
+// placeholder order (handles positional: "{0} {1} {0}" → a, b, a),
+// then emit everything in a single DEVICE_PRINTF call.
+template <fixed_string Fmt, fixed_string CombinedFmt,
+          size_t Pos, size_t AutoIdx, typename... Args, typename... CastArgs>
+inline void walk_and_emit(std::tuple<Args...> all_args, CastArgs... cast_args) {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    emit_combined<CombinedFmt>(cast_args...);
+  } else {
+    constexpr bool is_auto = (info.index < 0);
+    constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
+    using U = std::remove_cv_t<
+        std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>>;
+    constexpr format_spec spec =
+        (info.has_spec && info.close > info.spec_beg)
+            ? parse_spec<Fmt, info.spec_beg, info.close>()
+            : format_spec{};
+    constexpr char etype = effective_type<U, spec.type>();
+    constexpr size_t next_auto = is_auto ? AutoIdx + 1 : AutoIdx;
+    walk_and_emit<Fmt, CombinedFmt, info.close + 1, next_auto, Args...>(
+        all_args, cast_args...,
+        printf_cast<etype>(std::get<idx>(all_args)));
+  }
+}
+
+template <fixed_string Fmt, typename... Args>
+inline void print_combined_dispatch(Args... args) {
+  constexpr auto combined = build_combined_printf_fmt<Fmt, Args...>();
+  walk_and_emit<Fmt, combined, 0, 0, Args...>(
+      std::tuple<Args...>(args...));
+}
+
 } // namespace print_detail
 
 // ============================================================
@@ -1589,7 +1800,14 @@ inline void print_impl(Args... args) {
 
 template <print_detail::fixed_string Fmt, typename... Args>
 inline void print(Args... args) {
-  print_detail::print_impl<Fmt, 0, 0>(args...);
+  if constexpr (sizeof...(Args) == 0) {
+    // No args — just emit the literal
+    print_detail::print_impl<Fmt, 0, 0>(args...);
+  } else if constexpr (print_detail::all_printf_compatible<Fmt, 0, 0, Args...>()) {
+    print_detail::print_combined_dispatch<Fmt>(args...);
+  } else {
+    print_detail::print_impl<Fmt, 0, 0>(args...);
+  }
 }
 
 namespace print_detail {

@@ -15,9 +15,10 @@ FUZZ_STD      := $(addprefix fuzz_std_,$(OPT_LEVELS))
 FUZZ_SYCL     := $(addprefix fuzz_sycl_,$(OPT_LEVELS))
 FUZZ_SYCL_FM  := $(addprefix fuzz_sycl_ffast_,$(OPT_LEVELS))
 
-ALL_BINS := $(EXAMPLES_STD) $(EXAMPLES_SYCL) $(FUZZ_STD) $(FUZZ_SYCL) $(FUZZ_SYCL_FM)
+ALL_BINS := $(EXAMPLES_STD) $(EXAMPLES_SYCL) $(FUZZ_STD) $(FUZZ_SYCL) $(FUZZ_SYCL_FM) \
+            interleave_std interleave_sycl
 
-.PHONY: all build test test-examples test-fuzz test-ffast clean
+.PHONY: all build test test-examples test-fuzz test-ffast test-interleave clean
 
 all: test
 
@@ -25,10 +26,10 @@ all: test
 
 build: $(ALL_BINS)
 
-examples_std_%: examples.cpp
+examples_std_%: test_example.cpp
 	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(WA_$*) $< -o $@
 
-examples_sycl_%: examples.cpp sycl_khr_print.hpp
+examples_sycl_%: test_example.cpp sycl_khr_print.hpp
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
 
 fuzz_std_%: fuzz.cpp
@@ -40,9 +41,15 @@ fuzz_sycl_%: fuzz.cpp sycl_khr_print.hpp
 fuzz_sycl_ffast_%: fuzz.cpp sycl_khr_print.hpp
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(WA_$*) $< -o $@
 
+interleave_std: test_interleave.cpp
+	$(CXX) $(CXXFLAGS) -DUSE_STD $< -o $@
+
+interleave_sycl: test_interleave.cpp sycl_khr_print.hpp
+	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@
+
 # ── Test targets ─────────────────────────────────────────────
 
-test: test-examples test-fuzz test-ffast
+test: test-examples test-fuzz test-ffast test-interleave
 	@echo "==============================="
 	@echo "All tests passed."
 	@echo "==============================="
@@ -51,7 +58,7 @@ test-examples: $(EXAMPLES_STD) $(EXAMPLES_SYCL)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
 	  echo "--- examples -$$opt ---"; \
-	  diff <(./examples_std_$$opt) <(./examples_sycl_$$opt 2>/dev/null) \
+	  diff <(./examples_std_$$opt) <(ONEAPI_DEVICE_SELECTOR=*:cpu ./examples_sycl_$$opt 2>/dev/null) \
 	    && echo "  PASS" \
 	    || { echo "  FAIL"; fail=1; }; \
 	done; \
@@ -61,7 +68,7 @@ test-fuzz: $(FUZZ_STD) $(FUZZ_SYCL)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
 	  echo "--- fuzz -$$opt ---"; \
-	  diff <(./fuzz_std_$$opt) <(./fuzz_sycl_$$opt 2>/dev/null) \
+	  diff <(./fuzz_std_$$opt) <(ONEAPI_DEVICE_SELECTOR=*:cpu ./fuzz_sycl_$$opt 2>/dev/null) \
 	    && echo "  PASS" \
 	    || { echo "  FAIL"; fail=1; }; \
 	done; \
@@ -71,11 +78,17 @@ test-ffast: $(FUZZ_STD) $(FUZZ_SYCL_FM)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
 	  echo "--- fuzz -ffast-math -$$opt ---"; \
-	  diff <(./fuzz_std_$$opt) <(./fuzz_sycl_ffast_$$opt 2>/dev/null) \
+	  diff <(./fuzz_std_$$opt) <(ONEAPI_DEVICE_SELECTOR=*:cpu ./fuzz_sycl_ffast_$$opt 2>/dev/null) \
 	    && echo "  PASS" \
 	    || { echo "  FAIL"; fail=1; }; \
 	done; \
 	exit $$fail
+
+test-interleave: interleave_std interleave_sycl
+	@echo "--- interleave ---"; \
+	diff <(./interleave_std) <(ONEAPI_DEVICE_SELECTOR=*:cpu ./interleave_sycl 2>/dev/null) \
+	  && echo "  PASS" \
+	  || { echo "  FAIL"; exit 1; }
 
 clean:
 	rm -f $(ALL_BINS) repro_O0 repro_O1
