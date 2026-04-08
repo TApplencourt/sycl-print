@@ -1236,13 +1236,14 @@ inline void format_int_buf(T arg, int width = Spec.width) {
 
 // Compute width of float formatted as {:f} (for fill padding calculation)
 template <format_spec Spec>
-inline int compute_float_f_width(double val) {
+inline int compute_float_f_width(double val, int prec_override = -1) {
   int w = 0;
   if (val < 0.0) { w++; val = -val; }
   else if (Spec.sign == '+' || Spec.sign == ' ') w++;
   if (val < 1.0) w++;
   else { double v = val; while (v >= 1.0) { w++; v /= 10.0; } }
-  int p = Spec.precision >= 0 ? Spec.precision : 6;
+  int p = prec_override >= 0 ? prec_override
+        : Spec.precision >= 0 ? Spec.precision : 6;
   if (p > 0 || Spec.alt) w++;
   w += p;
   return w;
@@ -1478,17 +1479,10 @@ inline void print_arg_with_spec_dynamic(T arg, int dyn_w, int dyn_p) {
 
     // Estimate formatted width for padding
     int inner_w = 0;
-    if constexpr (etype == 'f' || etype == 'F') {
-      int w = 0;
-      double v = val < 0 ? -val : val;
-      if (val < 0 || Spec.sign == '+' || Spec.sign == ' ') w++;
-      if (v < 1.0) w++; else { double t = v; while (t >= 1.0) { w++; t /= 10.0; } }
-      if (prec > 0 || Spec.alt) w++;
-      w += prec;
-      inner_w = w;
-    } else {
+    if constexpr (etype == 'f' || etype == 'F')
+      inner_w = compute_float_f_width<Spec>(val, prec);
+    else
       inner_w = dyn_w; // can't compute, skip padding
-    }
     int pad = dyn_w > inner_w ? dyn_w - inner_w : 0;
     print_with_fill([&] { dispatch_float_prec<Spec, etype>(val, prec); },
                     fill_c, align_c, pad);
