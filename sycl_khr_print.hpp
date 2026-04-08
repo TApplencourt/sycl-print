@@ -12,8 +12,7 @@
 // Backend detection: DPC++ vs AdaptiveCpp
 #if defined(__ADAPTIVECPP__) || defined(__HIPSYCL__) || defined(__ACPP__)
   #define FMT_SYCL_ACPP 1
-  #include <cstdio>
-  #define DEVICE_PRINTF(...) printf(__VA_ARGS__)
+  #include <sycl/sycl.hpp>  // for sycl::detail::print — works on all ACPP backends
 #else
   #define FMT_SYCL_ACPP 0
   #include <sycl/ext/oneapi/experimental/builtins.hpp>
@@ -48,7 +47,7 @@ namespace print_detail {
 // Produces the shortest decimal representation of float/double.
 // Uses compressed cache tables (216 bytes) — GPU-friendly.
 
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#if defined(FMT_SYCL_RELAX_ATOMICITY) || FMT_SYCL_ACPP
 namespace dragonbox {
 
 struct uint128 {
@@ -628,7 +627,7 @@ inline auto format_shortest(char *buf, T value) -> int {
 }
 
 } // namespace dragonbox
-#endif // FMT_SYCL_RELAX_ATOMICITY
+#endif // FMT_SYCL_RELAX_ATOMICITY || FMT_SYCL_ACPP
 
 // ============================================================
 // fixed_string — compile-time string usable as NTTP
@@ -775,7 +774,11 @@ consteval auto make_literal() {
 template <fixed_string Lit, size_t... Is>
 inline void emit_literal_impl(std::index_sequence<Is...>) {
   static constexpr char s[] = {Lit.data[Is]..., '\0'};
+#if FMT_SYCL_ACPP
+  ::sycl::detail::print(s);
+#else
   DEVICE_PRINTF(s);
+#endif
 }
 
 template <fixed_string Lit>
@@ -804,6 +807,29 @@ template <typename T>
 concept sycl_printable = std::same_as<T, bool> || std::same_as<T, char>
     || std::integral<T> || std::floating_point<T> || std::is_pointer_v<T>;
 
+#if FMT_SYCL_ACPP
+// Helper: format an integer (signed or unsigned) as decimal into a stack
+// buffer and print it via sycl::detail::print.
+template <typename T>
+inline void acpp_print_decimal(T val) {
+  char buf[22]{}; // max 20 digits + sign + '\0'
+  int i = 20;
+  using U = std::make_unsigned_t<T>;
+  bool neg = false;
+  U uval;
+  if constexpr (std::signed_integral<T>) {
+    neg = val < 0;
+    uval = neg ? U(0) - static_cast<U>(val) : static_cast<U>(val);
+  } else {
+    uval = static_cast<U>(val);
+  }
+  if (uval == 0) { buf[i--] = '0'; }
+  else { while (uval > 0) { buf[i--] = '0' + static_cast<char>(uval % 10); uval /= 10; } }
+  if (neg) buf[i--] = '-';
+  ::sycl::detail::print(buf + i + 1);
+}
+#endif
+
 // ============================================================
 // print_arg_default — print one arg with its default specifier
 // ============================================================
@@ -813,36 +839,66 @@ inline void print_arg_default(T arg) {
   using U = std::decay_t<T>;
 
   if constexpr (std::same_as<U, bool>) {
+#if FMT_SYCL_ACPP
+    ::sycl::detail::print(arg ? "true" : "false");
+#else
     if (arg) DEVICE_PRINTF("true");
     else DEVICE_PRINTF("false");
+#endif
   } else if constexpr (std::same_as<U, char>) {
+#if FMT_SYCL_ACPP
+    char buf[2] = {arg, '\0'};
+    ::sycl::detail::print(buf);
+#else
     DEVICE_PRINTF("%c", arg);
+#endif
   } else if constexpr (std::signed_integral<U>) {
+#if FMT_SYCL_ACPP
+    acpp_print_decimal(arg);
+#else
     if constexpr (sizeof(U) <= 4) DEVICE_PRINTF("%d", signed_int_cast(arg));
     else DEVICE_PRINTF("%lld", signed_int_cast(arg));
+#endif
   } else if constexpr (std::unsigned_integral<U>) {
+#if FMT_SYCL_ACPP
+    acpp_print_decimal(arg);
+#else
     if constexpr (sizeof(U) <= 4) DEVICE_PRINTF("%u", unsigned_int_cast(arg));
     else DEVICE_PRINTF("%llu", unsigned_int_cast(arg));
+#endif
   } else if constexpr (std::floating_point<U>) {
 #ifdef FMT_SYCL_RELAX_ATOMICITY
     U val = arg;
     using bits_t = std::conditional_t<std::is_same_v<U, float>, uint32_t, uint64_t>;
     bool neg = __builtin_bit_cast(bits_t, val) >> (sizeof(bits_t) * 8 - 1);
-    if (neg) {
-      DEVICE_PRINTF("-");
-      val = -val;
-    }
-    char dbuf[24]; // format_shortest: max 23 chars (scientific: 1+1+16+'e'+sign+3)
+#if FMT_SYCL_ACPP
+    if (neg) { ::sycl::detail::print("-"); val = -val; }
+    char dbuf[24];
+    int dlen = dragonbox::format_shortest(dbuf, val);
+    dbuf[dlen] = '\0';
+    ::sycl::detail::print(dbuf);
+#else
+    if (neg) { DEVICE_PRINTF("-"); val = -val; }
+    char dbuf[24];
     int dlen = dragonbox::format_shortest(dbuf, val);
     for (int i = 0; i < dlen; i++)
       DEVICE_PRINTF("%c", dbuf[i]);
+#endif
+#else
+#if FMT_SYCL_ACPP
+    ::sycl::detail::print("<?g>"); // Level 4: float default without dragonbox
 #else
     DEVICE_PRINTF("%g", static_cast<double>(arg));
+#endif
 #endif
   } else if constexpr (std::is_pointer_v<U>) {
     using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
     if constexpr (std::same_as<Pointee, char>)
+#if FMT_SYCL_ACPP
+      ::sycl::detail::print(arg);
+#else
       DEVICE_PRINTF("%s", arg);
+#endif
     else
       DEVICE_PRINTF("%p", arg);
   }
@@ -1111,13 +1167,25 @@ inline void push_bool(fmt_buf &buf, bool val) {
 }
 
 inline void print_buf(const fmt_buf &buf) {
+#if FMT_SYCL_ACPP
+  // data[] is zero-initialised so data[len] == '\0'
+  ::sycl::detail::print(buf.data);
+#else
   for (int i = 0; i < buf.len; i++)
     DEVICE_PRINTF("%c", buf.data[i]);
+#endif
 }
 
 inline void print_fill(char c, int n) {
+#if FMT_SYCL_ACPP
+  char tmp[fmt_buf::cap + 1]{};
+  int m = n < fmt_buf::cap ? n : fmt_buf::cap;
+  for (int i = 0; i < m; i++) tmp[i] = c;
+  ::sycl::detail::print(tmp);
+#else
   for (int i = 0; i < n; i++)
     DEVICE_PRINTF("%c", c);
+#endif
 }
 
 // Apply fill + alignment and print (shared by int/hex-float buffer paths)
@@ -1439,10 +1507,28 @@ inline void print_arg_with_spec(T arg, int dyn_w = Spec.width, int dyn_p = Spec.
       print_float_with_fill<Spec, etype>(arg);
     }
   } else {
+#if FMT_SYCL_ACPP
+    // On ACPP: route through buffer formatters (no printf with args)
+    if constexpr (is_int_format(etype)) {
+      format_int_buf<Spec, etype>(arg, Spec.width);
+    } else if constexpr (etype == 'c') {
+      char cbuf[2] = {static_cast<char>(arg), '\0'};
+      ::sycl::detail::print(cbuf);
+    } else if constexpr (etype == 's') {
+      if constexpr (std::same_as<U, bool>)
+        ::sycl::detail::print(arg ? "true" : "false");
+      else
+        ::sycl::detail::print(printf_cast<etype>(arg));
+    } else {
+      // Float specs — Level 4 (not yet implemented)
+      ::sycl::detail::print("<?f>");
+    }
+#else
     // Fast printf path
     constexpr bool is_64 = sizeof(U) > 4;
     constexpr auto pfmt = build_printf_fmt<Spec, etype, is_64>();
     emit_printf_with_arg<pfmt>(printf_cast<etype>(arg));
+#endif
   }
 }
 
@@ -1559,6 +1645,9 @@ consteval bool is_printf_compatible() {
 // placeholder can be handled by a single printf specifier.
 template <fixed_string Fmt, size_t Pos = 0, size_t AutoIdx = 0, typename... Args>
 consteval bool all_printf_compatible() {
+#if FMT_SYCL_ACPP
+  return false; // Always use print_impl on ACPP (format into buffers)
+#endif
   constexpr auto info = find_placeholder<Fmt, Pos>();
   if constexpr (!info.found) {
     return true;
@@ -1663,6 +1752,115 @@ inline void print_combined_dispatch(Args... args) {
       std::tuple<Args...>(args...));
 }
 
+#if FMT_SYCL_ACPP
+// ============================================================
+// ACPP accumulator path
+//
+// Collects the entire formatted output into one fmt_buf, then
+// flushes with a single sycl::detail::print call — atomic per
+// work-item, no interleaving between format args.
+// ============================================================
+
+inline void acpp_write(fmt_buf& out, const char* s) {
+  while (*s) out.push(*s++);
+}
+
+template <typename T>
+inline void acpp_write_decimal(fmt_buf& out, T val) {
+  char tmp[22]{};
+  int i = 20;
+  using U = std::make_unsigned_t<T>;
+  bool neg = false;
+  U uval;
+  if constexpr (std::signed_integral<T>) {
+    neg = val < 0;
+    uval = neg ? U(0) - static_cast<U>(val) : static_cast<U>(val);
+  } else {
+    uval = static_cast<U>(val);
+  }
+  if (uval == 0) { tmp[i--] = '0'; }
+  else { while (uval > 0) { tmp[i--] = '0' + static_cast<char>(uval % 10); uval /= 10; } }
+  if (neg) tmp[i--] = '-';
+  acpp_write(out, tmp + i + 1);
+}
+
+template <typename T>
+inline void acpp_write_arg_default(fmt_buf& out, T arg) {
+  using U = std::decay_t<T>;
+  if constexpr (std::same_as<U, bool>) {
+    acpp_write(out, arg ? "true" : "false");
+  } else if constexpr (std::same_as<U, char>) {
+    out.push(arg);
+  } else if constexpr (std::signed_integral<U> || std::unsigned_integral<U>) {
+    acpp_write_decimal(out, arg);
+  } else if constexpr (std::floating_point<U>) {
+    // Dragonbox always available on ACPP (buffer guarantees atomicity).
+    U val = arg;
+    using bits_t = std::conditional_t<std::is_same_v<U, float>, uint32_t, uint64_t>;
+    bool neg = __builtin_bit_cast(bits_t, val) >> (sizeof(bits_t) * 8 - 1);
+    if (neg) { out.push('-'); val = -val; }
+    char dbuf[24];
+    int dlen = dragonbox::format_shortest(dbuf, val);
+    for (int k = 0; k < dlen; k++) out.push(dbuf[k]);
+  } else if constexpr (std::is_pointer_v<U>) {
+    using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
+    if constexpr (std::same_as<Pointee, char>)
+      acpp_write(out, arg);
+    else
+      acpp_write(out, "<?p>"); // Level 4: pointer
+  }
+}
+
+template <fixed_string Lit>
+inline void acpp_write_literal(fmt_buf& out) {
+  constexpr size_t len = flen(Lit);
+  if constexpr (len > 0) {
+    for (size_t i = 0; i < len; i++) out.push(Lit[i]);
+  }
+}
+
+template <fixed_string Fmt, placeholder_info Info, size_t AutoIdx, typename... Args>
+inline void acpp_write_one_arg(fmt_buf& out, const std::tuple<Args...>& all_args) {
+  constexpr size_t idx = Info.index >= 0 ? static_cast<size_t>(Info.index) : 0;
+  auto arg = std::get<idx>(all_args);
+  // Specs: TODO Level 3 — for now fall back to default format
+  acpp_write_arg_default(out, arg);
+}
+
+template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
+inline void acpp_print_impl(fmt_buf& out, const std::tuple<Args...>& all_args) {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    constexpr size_t end = flen(Fmt);
+    constexpr size_t sz = literal_out_size<Fmt, Pos, end>();
+    if constexpr (sz > 0) {
+      constexpr auto lit = make_literal<Fmt, Pos, end>();
+      acpp_write_literal<lit>(out);
+    }
+  } else {
+    constexpr size_t prefix_sz = literal_out_size<Fmt, Pos, info.open>();
+    if constexpr (prefix_sz > 0) {
+      constexpr auto prefix = make_literal<Fmt, Pos, info.open>();
+      acpp_write_literal<prefix>(out);
+    }
+    constexpr bool is_auto = (info.index < 0);
+    constexpr auto resolved = placeholder_info{
+        info.open, info.close, info.spec_beg, info.has_spec, info.found,
+        is_auto ? static_cast<int>(AutoIdx) : info.index};
+    acpp_write_one_arg<Fmt, resolved, AutoIdx>(out, all_args);
+
+    constexpr int dyn_start = static_cast<int>(AutoIdx) + 1;
+    constexpr int dyn_used =
+        (info.has_spec && info.close > info.spec_beg)
+            ? parse_spec<Fmt, info.spec_beg, info.close, dyn_start>().dyn_count
+            : 0;
+    constexpr size_t next_auto =
+        is_auto ? AutoIdx + 1 + static_cast<size_t>(dyn_used) : AutoIdx;
+    acpp_print_impl<Fmt, info.close + 1, next_auto>(out, all_args);
+  }
+}
+#endif // FMT_SYCL_ACPP
+
 } // namespace print_detail
 
 // ============================================================
@@ -1671,13 +1869,19 @@ inline void print_combined_dispatch(Args... args) {
 
 template <print_detail::fixed_string Fmt, print_detail::sycl_printable... Args>
 inline void print(Args... args) {
+#if FMT_SYCL_ACPP
+  // Accumulate everything into one buffer, then one sycl::detail::print call.
+  print_detail::fmt_buf out;
+  print_detail::acpp_print_impl<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
+  ::sycl::detail::print(out.data);
+#else
   if constexpr (sizeof...(Args) == 0) {
     // No args — just emit the literal
     print_detail::print_impl<Fmt, 0, 0>(std::tuple<>{});
   } else if constexpr (print_detail::all_printf_compatible<Fmt, 0, 0, Args...>()) {
     print_detail::print_combined_dispatch<Fmt>(args...);
   } else {
-#ifndef FMT_SYCL_RELAX_ATOMICITY
+#if !defined(FMT_SYCL_RELAX_ATOMICITY)
     static_assert(print_detail::all_printf_compatible<Fmt, 0, 0, Args...>(),
         "This format string uses non-atomic features ({:b}, {:a}, {:^}, "
         "custom fill, {:#x} with signed int, etc.). "
@@ -1686,6 +1890,7 @@ inline void print(Args... args) {
 #endif
     print_detail::print_impl<Fmt, 0, 0>(std::tuple<Args...>(args...));
   }
+#endif
 }
 
 namespace print_detail {
