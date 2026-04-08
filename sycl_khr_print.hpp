@@ -598,7 +598,6 @@ inline auto format_shortest(char *buf, T value) -> int {
         p += sig_size;
         for (int i = 0; i < int_digits - sig_size; i++) *p++ = '0';
       } else {
-        write_digits(p, significand, sig_size);
         char tmp[20];
         write_digits(tmp, significand, sig_size);
         for (int i = 0; i < int_digits; i++) p[i] = tmp[i];
@@ -1361,6 +1360,25 @@ inline void print_float_with_fill(T arg) {
   print_with_fill([&] { emit_printf_with_arg<pfmt>(val); }, fill_c, align_c, pad);
 }
 
+// Cast an arg to its printf-compatible type.
+template <char EffType, typename T>
+inline auto printf_cast(T arg) {
+  using U = std::decay_t<T>;
+  if constexpr (std::same_as<U, bool> && EffType == 's')
+    return arg ? "true" : "false";
+  else if constexpr (EffType == 'c')
+    return static_cast<char>(arg);
+  else if constexpr (EffType == 'd') {
+    return signed_int_cast(arg);
+  } else if constexpr (EffType == 'u' || EffType == 'x' || EffType == 'X' ||
+                        EffType == 'o') {
+    return unsigned_int_cast(arg);
+  } else if constexpr (is_float_format(EffType))
+    return static_cast<double>(arg);
+  else
+    return arg;
+}
+
 // ============================================================
 // print_arg_with_spec — print one arg using a parsed format spec
 // ============================================================
@@ -1431,19 +1449,7 @@ inline void print_arg_with_spec(T arg, int dyn_w = Spec.width, int dyn_p = Spec.
     // Fast printf path
     constexpr bool is_64 = sizeof(U) > 4;
     constexpr auto pfmt = build_printf_fmt<Spec, etype, is_64>();
-
-    if constexpr (etype == 'c') {
-      emit_printf_with_arg<pfmt>(static_cast<char>(arg));
-    } else if constexpr (etype == 'd') {
-      emit_printf_with_arg<pfmt>(signed_int_cast(arg));
-    } else if constexpr (etype == 'u' || etype == 'x' || etype == 'X' ||
-                          etype == 'o') {
-      emit_printf_with_arg<pfmt>(unsigned_int_cast(arg));
-    } else if constexpr (is_float_format(etype)) {
-      emit_printf_with_arg<pfmt>(static_cast<double>(arg));
-    } else {
-      emit_printf_with_arg<pfmt>(arg);
-    }
+    emit_printf_with_arg<pfmt>(printf_cast<etype>(arg));
   }
 }
 
@@ -1617,25 +1623,6 @@ consteval auto build_combined_printf_fmt() {
   walk_combined_fmt<Fmt, 0, 0, Args...>(result.data);
   result.data[N - 1] = '\0';
   return result;
-}
-
-// Cast an arg to its printf-compatible type.
-template <char EffType, typename T>
-inline auto printf_cast(T arg) {
-  using U = std::decay_t<T>;
-  if constexpr (std::same_as<U, bool> && EffType == 's')
-    return arg ? "true" : "false";
-  else if constexpr (EffType == 'c')
-    return static_cast<char>(arg);
-  else if constexpr (EffType == 'd') {
-    return signed_int_cast(arg);
-  } else if constexpr (EffType == 'u' || EffType == 'x' || EffType == 'X' ||
-                        EffType == 'o') {
-    return unsigned_int_cast(arg);
-  } else if constexpr (is_float_format(EffType))
-    return static_cast<double>(arg);
-  else
-    return arg;
 }
 
 // Emit a combined printf format string with N args in one DEVICE_PRINTF call.
