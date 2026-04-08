@@ -1585,48 +1585,10 @@ consteval bool all_printf_compatible() {
   }
 }
 
-// Compute the printf specifier for one placeholder and append it to a buffer.
-// Returns the new write position.
-template <typename U, format_spec Spec>
-consteval size_t append_printf_spec(char *out, size_t pos) {
-  constexpr char etype = effective_type<U, Spec.type>();
-  constexpr bool is_64 = sizeof(U) > 4;
-  constexpr auto pfmt = build_printf_fmt<Spec, etype, is_64>();
-  for (size_t i = 0; i < pfmt.len; i++)
-    out[pos++] = pfmt.data[i];
-  return pos;
-}
-
-
-// Two-pass compile-time builder: first compute size, then fill.
-// Pass 1: compute total size of the combined printf format string.
+// Unified walk: when out==nullptr, counts total size; otherwise writes.
+// Handles literal segments and printf specifiers for each placeholder.
 template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
-consteval size_t combined_fmt_size() {
-  constexpr auto info = find_placeholder<Fmt, Pos>();
-  if constexpr (!info.found) {
-    return literal_out_size<Fmt, Pos, flen(Fmt)>();
-  } else {
-    constexpr size_t prefix = literal_out_size<Fmt, Pos, info.open>();
-    constexpr bool is_auto = (info.index < 0);
-    constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
-    using U = std::decay_t<std::tuple_element_t<idx, std::tuple<Args...>>>;
-    constexpr format_spec spec =
-        (info.has_spec && info.close > info.spec_beg)
-            ? parse_spec<Fmt, info.spec_beg, info.close>()
-            : format_spec{};
-    constexpr char etype = effective_type<U, spec.type>();
-    constexpr bool is_64 = sizeof(U) > 4;
-    constexpr auto pfmt = build_printf_fmt<spec, etype, is_64>();
-
-    constexpr size_t next_auto = is_auto ? AutoIdx + 1 : AutoIdx;
-    return prefix + pfmt.len +
-           combined_fmt_size<Fmt, info.close + 1, next_auto, Args...>();
-  }
-}
-
-// Pass 2: build the combined printf format string into a fixed_string.
-template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
-consteval size_t fill_combined_fmt(char *out, size_t pos) {
+consteval size_t walk_combined_fmt(char *out, size_t pos = 0) {
   constexpr auto info = find_placeholder<Fmt, Pos>();
   if constexpr (!info.found) {
     return walk_literal<Fmt, Pos, flen(Fmt)>(out, pos);
@@ -1639,17 +1601,23 @@ consteval size_t fill_combined_fmt(char *out, size_t pos) {
         (info.has_spec && info.close > info.spec_beg)
             ? parse_spec<Fmt, info.spec_beg, info.close>()
             : format_spec{};
-    pos = append_printf_spec<U, spec>(out, pos);
+    constexpr char etype = effective_type<U, spec.type>();
+    constexpr bool is_64 = sizeof(U) > 4;
+    constexpr auto pfmt = build_printf_fmt<spec, etype, is_64>();
+    for (size_t i = 0; i < pfmt.len; i++) {
+      if (out) out[pos] = pfmt.data[i];
+      pos++;
+    }
     constexpr size_t next_auto = is_auto ? AutoIdx + 1 : AutoIdx;
-    return fill_combined_fmt<Fmt, info.close + 1, next_auto, Args...>(out, pos);
+    return walk_combined_fmt<Fmt, info.close + 1, next_auto, Args...>(out, pos);
   }
 }
 
 template <fixed_string Fmt, typename... Args>
 consteval auto build_combined_printf_fmt() {
-  constexpr size_t N = combined_fmt_size<Fmt, 0, 0, Args...>() + 1;
+  constexpr size_t N = walk_combined_fmt<Fmt, 0, 0, Args...>(nullptr) + 1;
   fixed_string<N> result{};
-  fill_combined_fmt<Fmt, 0, 0, Args...>(result.data, 0);
+  walk_combined_fmt<Fmt, 0, 0, Args...>(result.data);
   result.data[N - 1] = '\0';
   return result;
 }
