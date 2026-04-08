@@ -1368,8 +1368,8 @@ inline void print_float_with_fill(T arg) {
 // print_arg_with_spec — print one arg using a parsed format spec
 // ============================================================
 
-template <format_spec Spec, typename T>
-inline void print_arg_with_spec(T arg) {
+template <format_spec Spec, bool Dynamic = false, typename T>
+inline void print_arg_with_spec(T arg, int dyn_w = Spec.width, int dyn_p = Spec.precision) {
   using U = std::decay_t<T>;
 
   // Bool without explicit type (or {:s}) → "true"/"false"
@@ -1378,7 +1378,7 @@ inline void print_arg_with_spec(T arg) {
     fmt_buf content;
     push_bool(content, arg);
     apply_padding_and_print(content, Spec.fill_or(),
-                            Spec.align_or(), Spec.width);
+                            Spec.align_or(), dyn_w);
     return;
   }
 
@@ -1386,7 +1386,7 @@ inline void print_arg_with_spec(T arg) {
 
   // Determine if buffer path is needed
   constexpr bool is_signed_int = std::is_signed_v<U> && !std::is_same_v<U, bool>;
-  constexpr bool needs_buf =
+  constexpr bool needs_buf = Dynamic ||
       (etype == 'b' || etype == 'B') ||
       (Spec.align == '^') ||
       (Spec.fill != '\0' && Spec.fill != ' ') ||
@@ -1400,26 +1400,36 @@ inline void print_arg_with_spec(T arg) {
   if constexpr (needs_hex_float) {
     format_hex_float<Spec, etype>(arg);
   } else if constexpr (needs_buf && is_int_format(etype)) {
-    // Buffer path — full integer formatting
-    format_int_buf<Spec, etype>(arg);
+    format_int_buf<Spec, etype>(arg, dyn_w);
   } else if constexpr (needs_buf && etype == 'c') {
-    // Buffer path — char with fill/center
     fmt_buf content;
     content.push(static_cast<char>(arg));
     apply_padding_and_print(content, Spec.fill_or(),
-                            Spec.align_or(), Spec.width);
+                            Spec.align_or(), dyn_w);
   } else if constexpr (needs_buf && etype == 's') {
-    // Buffer path — string/bool with fill/center
     fmt_buf content;
     if constexpr (std::is_same_v<U, bool>)
       push_bool(content, arg);
     else
       content.push_str(arg);
     apply_padding_and_print(content, Spec.fill_or(),
-                            Spec.align_or('<'), Spec.width);
+                            Spec.align_or('<'), dyn_w);
   } else if constexpr (needs_buf && is_float_format(etype)) {
-    // Multi-printf path — fill around printf output
-    print_float_with_fill<Spec, etype>(arg);
+    if constexpr (Dynamic) {
+      // Dynamic precision: dispatch at runtime (0..20), pad for width
+      double val = static_cast<double>(arg);
+      int prec = dyn_p >= 0 ? dyn_p : (Spec.precision >= 0 ? Spec.precision : 6);
+      int inner_w = 0;
+      if constexpr (etype == 'f' || etype == 'F')
+        inner_w = compute_float_f_width<Spec>(val, prec);
+      else
+        inner_w = dyn_w;
+      int pad = dyn_w > inner_w ? dyn_w - inner_w : 0;
+      print_with_fill([&] { dispatch_float_prec<Spec, etype>(val, prec); },
+                      Spec.fill_or(), Spec.align_or(), pad);
+    } else {
+      print_float_with_fill<Spec, etype>(arg);
+    }
   } else {
     // Fast printf path
     constexpr bool is_64 = sizeof(U) > 4;
@@ -1437,54 +1447,6 @@ inline void print_arg_with_spec(T arg) {
     } else {
       emit_printf_with_arg<pfmt>(arg);
     }
-  }
-}
-
-// Dynamic width/precision: SYCL printf doesn't support %*d/%.*f,
-// so we use buffer path for ints and precision dispatch for floats.
-template <format_spec Spec, typename T>
-inline void print_arg_with_spec_dynamic(T arg, int dyn_w, int dyn_p) {
-  using U = std::decay_t<T>;
-
-  // Bool
-  if constexpr (std::is_same_v<U, bool> &&
-                (Spec.type == '\0' || Spec.type == 's')) {
-    fmt_buf content;
-    push_bool(content, arg);
-    apply_padding_and_print(content, Spec.fill_or(),
-                            Spec.align_or(), dyn_w);
-    return;
-  }
-
-  constexpr char etype = effective_type<U, Spec.type>();
-
-  if constexpr (is_int_format(etype)) {
-    format_int_buf<Spec, etype>(arg, dyn_w);
-  } else if constexpr (is_float_format(etype)) {
-    // Float: dispatch precision at compile-time (0..20), pad for width
-    double val = static_cast<double>(arg);
-    int prec = dyn_p >= 0 ? dyn_p : (Spec.precision >= 0 ? Spec.precision : 6);
-    char fill_c = Spec.fill_or();
-    char align_c = Spec.align_or();
-
-    // Estimate formatted width for padding
-    int inner_w = 0;
-    if constexpr (etype == 'f' || etype == 'F')
-      inner_w = compute_float_f_width<Spec>(val, prec);
-    else
-      inner_w = dyn_w; // can't compute, skip padding
-    int pad = dyn_w > inner_w ? dyn_w - inner_w : 0;
-    print_with_fill([&] { dispatch_float_prec<Spec, etype>(val, prec); },
-                    fill_c, align_c, pad);
-  } else {
-    // Char, string — format to buffer, then pad
-    fmt_buf content;
-    if constexpr (etype == 'c') content.push(static_cast<char>(arg));
-    else if constexpr (etype == 's') {
-      content.push_str(arg);
-    } else { print_arg_default(arg); return; }
-    apply_padding_and_print(content, Spec.fill_or(),
-                            Spec.align_or(), dyn_w);
   }
 }
 
@@ -1515,7 +1477,7 @@ inline void print_one_arg(const std::tuple<Args...> &all_args) {
         constexpr size_t pi = static_cast<size_t>(spec.prec_arg);
         dyn_p = static_cast<int>(std::get<pi>(all_args));
       }
-      print_arg_with_spec_dynamic<spec>(arg, dyn_w, dyn_p);
+      print_arg_with_spec<spec, true>(arg, dyn_w, dyn_p);
     } else {
       print_arg_with_spec<spec>(arg);
     }
