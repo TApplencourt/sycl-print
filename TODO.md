@@ -1,20 +1,6 @@
 # fmt-sycl Refactoring Plan
 
-## Step 0: Add test IDs
-
-Add a `Test X` printout before each test so it's easier to identify which test fails.
-- `X` is a static counter incremented by the test macro.
-
-## Step 1: Merge all tests into interleave tests
-
-- All tests run in `parallel_for` with a configurable range (default 2).
-- Both std and SYCL paths print each line `range` times, so `diff` still works.
-- This verifies output is not mangled/interleaved across work-items.
-- Tests for DPC++-unsupported features (binary, hex-float, center-align, custom fill,
-  dragonbox default float) are commented out / `#ifdef`-guarded for DPC++.
-- `FMT_SYCL_WA_STR` guards stay for string literal tests (DPC++ O0 bug).
-
-## Step 2: Refactor code flow
+## Refactor code flow
 
 ### Remove `FMT_SYCL_RELAX_ATOMICITY`
 
