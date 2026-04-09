@@ -20,8 +20,8 @@ endif
 WA_O0 := -DFMT_SYCL_WA_STR
 
 # Derived binary names
-EXAMPLES_STD  := $(addprefix examples_std_,$(OPT_LEVELS))
-EXAMPLES_SYCL := $(addprefix examples_sycl_,$(OPT_LEVELS))
+EXAMPLES_STD  := $(addprefix serial_std_,$(OPT_LEVELS))
+EXAMPLES_SYCL := $(addprefix serial_sycl_,$(OPT_LEVELS))
 FUZZ_STD      := $(addprefix fuzz_std_,$(OPT_LEVELS))
 FUZZ_SYCL     := $(addprefix fuzz_sycl_,$(OPT_LEVELS))
 FUZZ_SYCL_FM  := $(addprefix fuzz_sycl_ffast_,$(OPT_LEVELS))
@@ -38,10 +38,10 @@ all: test
 
 build: $(ALL_BINS)
 
-examples_std_%: test_example.cpp
+serial_std_%: test_serial.cpp
 	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
 
-examples_sycl_%: test_example.cpp sycl_khr_print.hpp
+serial_sycl_%: test_serial.cpp sycl_khr_print.hpp
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
 
 fuzz_std_%: fuzz.cpp
@@ -76,8 +76,8 @@ test: test-examples test-fuzz test-ffast test-interleave
 test-examples: $(EXAMPLES_STD) $(EXAMPLES_SYCL)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
-	  echo "--- examples -$$opt ---"; \
-	  diff <(./examples_std_$$opt) <(ONEAPI_DEVICE_SELECTOR=*:cpu ./examples_sycl_$$opt 2>/dev/null) \
+	  echo "--- serial -$$opt ---"; \
+	  diff <(./serial_std_$$opt) <(ONEAPI_DEVICE_SELECTOR=*:cpu ./serial_sycl_$$opt 2>/dev/null) \
 	    && echo "  PASS" \
 	    || { echo "  FAIL"; fail=1; }; \
 	done; \
