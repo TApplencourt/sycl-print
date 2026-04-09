@@ -704,12 +704,16 @@ template <fixed_string Fmt, size_t From = 0> consteval placeholder_info find_pla
 }
 
 // ============================================================
-// Literal segment: unescape {{ → {, }} → }, and % → %%
+// Literal segment: unescape {{ → {, }} → } (and optionally % → %%)
 // ============================================================
 
-// Unified literal walker: unescape {{ → {, }} → }, and % → %%.
+// Unified literal walker: unescape {{ → {, }} → }.
+// When EscapePercent=true (DPC++ path), also escapes % → %% for printf.
+// When EscapePercent=false (ACPP buffer path), % is left as-is; the
+// runtime loop in print() will escape all % at once after the buffer
+// is fully assembled (covering both literals and argument values).
 // When out == nullptr, counts output size; otherwise writes to out.
-template <fixed_string Fmt, size_t Begin, size_t End>
+template <fixed_string Fmt, size_t Begin, size_t End, bool EscapePercent = true>
 consteval size_t walk_literal(char *out, size_t pos = 0) {
   size_t i = Begin;
   while (i < End) {
@@ -723,7 +727,7 @@ consteval size_t walk_literal(char *out, size_t pos = 0) {
         out[pos] = '}';
       pos++;
       i += 2;
-    } else if (Fmt[i] == '%') {
+    } else if (EscapePercent && Fmt[i] == '%') {
       if (out) {
         out[pos] = '%';
         out[pos + 1] = '%';
@@ -740,14 +744,16 @@ consteval size_t walk_literal(char *out, size_t pos = 0) {
   return pos;
 }
 
-template <fixed_string Fmt, size_t Begin, size_t End> consteval size_t literal_out_size() {
-  return walk_literal<Fmt, Begin, End>(nullptr);
+template <fixed_string Fmt, size_t Begin, size_t End, bool EscapePercent = true>
+consteval size_t literal_out_size() {
+  return walk_literal<Fmt, Begin, End, EscapePercent>(nullptr);
 }
 
-template <fixed_string Fmt, size_t Begin, size_t End> consteval auto make_literal() {
-  constexpr size_t N = literal_out_size<Fmt, Begin, End>() + 1;
+template <fixed_string Fmt, size_t Begin, size_t End, bool EscapePercent = true>
+consteval auto make_literal() {
+  constexpr size_t N = literal_out_size<Fmt, Begin, End, EscapePercent>() + 1;
   fixed_string<N> result{};
-  walk_literal<Fmt, Begin, End>(result.data);
+  walk_literal<Fmt, Begin, End, EscapePercent>(result.data);
   result.data[N - 1] = '\0';
   return result;
 }
@@ -1743,15 +1749,17 @@ inline void format(fmt_buf &out, const std::tuple<Args...> &all_args) {
   constexpr auto info = find_placeholder<Fmt, Pos>();
   if constexpr (!info.found) {
     constexpr size_t end = flen(Fmt);
-    constexpr size_t sz = literal_out_size<Fmt, Pos, end>();
+    // EscapePercent=false: % is left as-is here; the runtime loop in print()
+    // will escape all % (from literals and arg values) before calling printf.
+    constexpr size_t sz = literal_out_size<Fmt, Pos, end, false>();
     if constexpr (sz > 0) {
-      constexpr auto lit = make_literal<Fmt, Pos, end>();
+      constexpr auto lit = make_literal<Fmt, Pos, end, false>();
       write_literal<lit>(out);
     }
   } else {
-    constexpr size_t prefix_sz = literal_out_size<Fmt, Pos, info.open>();
+    constexpr size_t prefix_sz = literal_out_size<Fmt, Pos, info.open, false>();
     if constexpr (prefix_sz > 0) {
-      constexpr auto prefix = make_literal<Fmt, Pos, info.open>();
+      constexpr auto prefix = make_literal<Fmt, Pos, info.open, false>();
       write_literal<prefix>(out);
     }
     constexpr bool is_auto = (info.index < 0);
