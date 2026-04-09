@@ -47,7 +47,7 @@ namespace print_detail {
 // Produces the shortest decimal representation of float/double.
 // Uses compressed cache tables (216 bytes) — GPU-friendly.
 
-#if defined(FMT_SYCL_RELAX_ATOMICITY) || FMT_SYCL_ACPP
+#if FMT_SYCL_ACPP
 namespace dragonbox {
 
 struct uint128 {
@@ -627,7 +627,7 @@ inline auto format_shortest(char *buf, T value) -> int {
 }
 
 } // namespace dragonbox
-#endif // FMT_SYCL_RELAX_ATOMICITY || FMT_SYCL_ACPP
+#endif // FMT_SYCL_ACPP
 
 // ============================================================
 // fixed_string — compile-time string usable as NTTP
@@ -2164,18 +2164,19 @@ inline void print(Args... args) {
 #else
   if constexpr (sizeof...(Args) == 0) {
     // No args — just emit the literal
-    print_detail::print_impl<Fmt, 0, 0>(std::tuple<>{});
-  } else if constexpr (print_detail::all_printf_compatible<Fmt, 0, 0, Args...>()) {
-    print_detail::print_combined_dispatch<Fmt>(args...);
+    constexpr size_t end = print_detail::flen(Fmt);
+    constexpr size_t out_sz = print_detail::literal_out_size<Fmt, 0, end>();
+    if constexpr (out_sz > 0) {
+      constexpr auto lit = print_detail::make_literal<Fmt, 0, end>();
+      print_detail::emit_literal<lit>();
+    }
   } else {
-#if !defined(FMT_SYCL_RELAX_ATOMICITY)
     static_assert(print_detail::all_printf_compatible<Fmt, 0, 0, Args...>(),
-        "This format string uses non-atomic features ({:b}, {:a}, {:^}, "
-        "custom fill, {:#x} with signed int, etc.). "
-        "Define FMT_SYCL_RELAX_ATOMICITY to enable (output may interleave "
-        "across work-items).");
-#endif
-    print_detail::print_impl<Fmt, 0, 0>(std::tuple<Args...>(args...));
+        "This format string uses features not supported on DPC++ "
+        "({:b}, {:a}, {:^}, custom fill, {:#x} with signed int, "
+        "dynamic width/precision, dragonbox default float). "
+        "These features are only available on ACPP.");
+    print_detail::print_combined_dispatch<Fmt>(args...);
   }
 #endif
 }
