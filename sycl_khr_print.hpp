@@ -16,8 +16,6 @@
 #else
   #define FMT_SYCL_ACPP 0
   #include <sycl/ext/oneapi/experimental/builtins.hpp>
-  #define DEVICE_PRINTF(...) \
-    ::sycl::ext::oneapi::experimental::printf(__VA_ARGS__)
 #endif
 
 #include <algorithm> // std::copy_n
@@ -777,7 +775,7 @@ inline void emit_literal_impl(std::index_sequence<Is...>) {
 #if FMT_SYCL_ACPP
   ::sycl::detail::print(s);
 #else
-  DEVICE_PRINTF(s);
+  ::sycl::ext::oneapi::experimental::printf(s);
 #endif
 }
 
@@ -1150,7 +1148,7 @@ inline auto printf_cast(T arg) {
 }
 
 // ============================================================
-// Atomic print — single DEVICE_PRINTF call for the entire format
+// Atomic print — single ::sycl::ext::oneapi::experimental::printf call for the entire format
 // ============================================================
 
 // Check at compile time if a placeholder + arg type can use a standard
@@ -1246,11 +1244,11 @@ consteval auto build_combined_printf_fmt() {
   return result;
 }
 
-// Emit a combined printf format string with N args in one DEVICE_PRINTF call.
+// Emit a combined printf format string with N args in one ::sycl::ext::oneapi::experimental::printf call.
 template <fixed_string CombinedFmt, size_t... FmtIs, typename... CastArgs>
 inline void emit_combined_impl(std::index_sequence<FmtIs...>, CastArgs... args) {
   static constexpr char s[] = {CombinedFmt.data[FmtIs]..., '\0'};
-  DEVICE_PRINTF(s, args...);
+  ::sycl::ext::oneapi::experimental::printf(s, args...);
 }
 
 template <fixed_string CombinedFmt, typename... CastArgs>
@@ -1261,7 +1259,7 @@ inline void emit_combined(CastArgs... args) {
 
 // Walk placeholders at compile time, accumulate printf-cast args in
 // placeholder order (handles positional: "{0} {1} {0}" → a, b, a),
-// then emit everything in a single DEVICE_PRINTF call.
+// then emit everything in a single ::sycl::ext::oneapi::experimental::printf call.
 template <fixed_string Fmt, fixed_string CombinedFmt,
           size_t Pos, size_t AutoIdx, typename... Args, typename... CastArgs>
 inline void walk_and_emit(std::tuple<Args...> all_args, CastArgs... cast_args) {
