@@ -1181,7 +1181,7 @@ template <typename U, format_spec Spec> consteval bool is_printf_compatible() {
   // Bool default/s → %s with "true"/"false" literal — printf-compatible
   // (string literals live in constant memory, safe for SYCL printf)
   // With UNFORCE_ATOMICITY: default float uses dragonbox (not printf-compatible)
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   if constexpr (std::floating_point<U> && Spec.type == '\0')
     return false;
 #endif

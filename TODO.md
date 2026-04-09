@@ -2,7 +2,7 @@
 
 ## Refactor code flow
 
-### Remove `FMT_SYCL_RELAX_ATOMICITY`
+### Remove `FMT_SYCL_BUFFER_PATH_ONLY`
 
 This flag is removed entirely. Atomicity is always guaranteed:
 - DPC++: single combined `DEVICE_PRINTF` call.
@@ -32,7 +32,7 @@ sycl::print<"format">(args...)
 
 ### What gets deleted
 
-- `FMT_SYCL_RELAX_ATOMICITY` and all associated `#ifdef` branching
+- `FMT_SYCL_BUFFER_PATH_ONLY` and all associated `#ifdef` branching
 - `print_arg_default()` (DPC++ per-arg printf calls)
 - `print_arg_with_spec()` (DPC++ per-arg with spec)
 - `print_impl()` (DPC++ recursive per-arg walker)

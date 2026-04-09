@@ -12,8 +12,8 @@
 
 // ACPP buffer path guarantees atomicity, so all features are always available.
 #if defined(__ADAPTIVECPP__) || defined(__HIPSYCL__) || defined(__ACPP__)
-#  ifndef FMT_SYCL_RELAX_ATOMICITY
-#    define FMT_SYCL_RELAX_ATOMICITY
+#  ifndef FMT_SYCL_BUFFER_PATH_ONLY
+#    define FMT_SYCL_BUFFER_PATH_ONLY
 #  endif
 #endif
 
@@ -79,7 +79,7 @@ int main() {
   RUN(PRINT("{}\n", 0.1));
   RUN(PRINT("{}\n", 1.0));
   RUN(PRINT("{}\n", -2.5));
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   // Shortest-decimal may differ from %g (exponent edge cases)
   RUN(PRINT("{}\n", 1.0e10f));
   RUN(PRINT("{}\n", 1.0e-10f));
@@ -113,7 +113,7 @@ int main() {
   RUN(PRINT("{:x}\n", 255u));
   RUN(PRINT("{:X}\n", 255u));
   RUN(PRINT("{:o}\n", 255u));
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:b}\n", 255));
   RUN(PRINT("{:B}\n", 255));
 #endif
@@ -122,7 +122,7 @@ int main() {
   // 5. Alternate form
   // =================================================================
   RUN(PRINT("{:#o}\n", 255u));
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:#x}\n", 255));
   RUN(PRINT("{:#b}\n", 255));
 #endif
@@ -135,7 +135,7 @@ int main() {
   RUN(PRINT("{:E}\n", 3.14159));
   RUN(PRINT("{:g}\n", 3.14159));
   RUN(PRINT("{:G}\n", 3.14159));
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:a}\n", 3.14159));
   RUN(PRINT("{:A}\n", 3.14159));
 #endif
@@ -146,14 +146,14 @@ int main() {
   RUN(PRINT("{:10d}\n", 42));
   RUN(PRINT("{:<10d}\n", 42));
   RUN(PRINT("{:>10d}\n", 42));
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:^10d}\n", 42));
 #endif
 
   // =================================================================
   // 8. Fill character + alignment
   // =================================================================
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:*<10d}\n", 42));
   RUN(PRINT("{:*>10d}\n", 42));
   RUN(PRINT("{:*^10d}\n", 42));
@@ -185,11 +185,11 @@ int main() {
   // 12. Combined specs
   // =================================================================
   RUN(PRINT("{:+010d}\n", 42));
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:#010x}\n", 255));
 #endif
   RUN(PRINT("{:+15.6f}\n", 3.14));
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:*>15.6f}\n", 3.14));
 #endif
 
@@ -200,7 +200,7 @@ int main() {
     int a = 1; int b = 2;
     PRINT("{} + {} = {}\n", a, b, a + b);
   });
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("hex={:#x} pi={:.4f}\n", 255, 3.14159));
 #endif
   RUN(PRINT("{} {} {} {} {} {} {}\n", 1, 2, 3, 4, 5, 6, 7));
@@ -232,7 +232,7 @@ int main() {
   // 17. Integer extremes
   // =================================================================
   RUN(PRINT("{:d}\n", -2147483647 - 1));
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:x}\n", -2147483647 - 1));
   RUN(PRINT("{:b}\n", -2147483647 - 1));
   RUN(PRINT("{:b}\n", static_cast<uint64_t>(18446744073709551615ULL)));
@@ -249,7 +249,7 @@ int main() {
   RUN(PRINT("{:f}\n", 1.0 / 0.0));             // inf
   RUN(PRINT("{:e}\n", 1.0 / 0.0));             // inf
   RUN(PRINT("{:+f}\n", 3.14));                  // +3.140000
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:a}\n", 0.0));                    // 0p+0
   RUN(PRINT("{:a}\n", -0.0));                   // -0p+0
   RUN(PRINT("{:a}\n", 1.0));                    // 1p+0
@@ -263,7 +263,7 @@ int main() {
   RUN(PRINT("{:<10}\n", false));                 // "false     "
   RUN(PRINT("{:s}\n", true));                    // "true"
   RUN(PRINT("{:s}\n", false));                   // "false"
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:*^10}\n", true));                 // "***true***"
 #endif
   RUN(PRINT("{:c}\n", 65));                      // A
@@ -271,7 +271,7 @@ int main() {
   // =================================================================
   // 20. Width/fill combos
   // =================================================================
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:#^20b}\n", 255));                 // binary+center+fill+alt
   RUN(PRINT("{:+010x}\n", -1));                  // sign-aware zero-pad hex
   RUN(PRINT("{:>20b}\n", static_cast<uint8_t>(255))); // right-align binary
@@ -281,7 +281,7 @@ int main() {
   // =================================================================
   // 21. Hex float edge cases
   // =================================================================
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:a}\n", 1.0 / 0.0));              // inf
   RUN(PRINT("{:A}\n", 0.0 / 0.0));              // NAN
   RUN(PRINT("{:a}\n", 0.125));                    // exact power of 2
@@ -294,7 +294,7 @@ int main() {
 #ifndef FMT_SYCL_WA_STR
   RUN(PRINT("{1} {0}\n", "hello", "world"));
 #endif
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{0:x} {0:d} {0:b}\n", 255));
 #endif
   RUN(PRINT("{0:>10} {1:<10}\n", 42, 99));
@@ -305,7 +305,7 @@ int main() {
   // =================================================================
   // 23. Dynamic width and precision
   // =================================================================
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINT("{:{}d}\n", 42, 10));                // width=10
   RUN(PRINT("{:{}d}\n", 42, 1));                 // width=1 (smaller than content)
   RUN(PRINT("{:.{}f}\n", 3.14159, 2));           // precision=2
@@ -336,7 +336,7 @@ int main() {
   RUN(PRINTLN("hello println"));
   RUN(PRINTLN("{} + {} = {}", 1, 2, 3));
   RUN(PRINTLN("{:08x}", 255u));
-#ifdef FMT_SYCL_RELAX_ATOMICITY
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
   RUN(PRINTLN("{:08x}", 255));
 #endif
 
@@ -360,6 +360,222 @@ int main() {
     ::sycl::free(shared, q);
 #endif
   }
+#endif
+
+  // =================================================================
+  // 28. Sign with hex/oct/bin (ACPP only)
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:+x}\n", 255));
+  RUN(PRINT("{:+x}\n", -1));
+  RUN(PRINT("{: x}\n", 255));
+  RUN(PRINT("{: x}\n", -1));
+  RUN(PRINT("{:+o}\n", 255));
+  RUN(PRINT("{: o}\n", 255));
+  RUN(PRINT("{:+b}\n", 42));
+  RUN(PRINT("{: b}\n", 42));
+  RUN(PRINT("{:+b}\n", -1));
+#endif
+
+  // =================================================================
+  // 29. Sign with float a/A (ACPP only)
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:+a}\n", 3.14));
+  RUN(PRINT("{:+a}\n", -3.14));
+  RUN(PRINT("{: a}\n", 3.14));
+  RUN(PRINT("{: a}\n", -3.14));
+  RUN(PRINT("{:+A}\n", 1.0));
+#endif
+
+  // =================================================================
+  // 30. Width on char
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:10c}\n", 'A'));                     // default align = '<' in std::format
+#endif
+  RUN(PRINT("{:<10c}\n", 'B'));
+  RUN(PRINT("{:>10c}\n", 'C'));
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:^10c}\n", 'D'));
+#endif
+
+  // =================================================================
+  // 31. Width/align on string
+  // =================================================================
+#ifndef FMT_SYCL_WA_STR
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:20s}\n", "hello"));                 // default align = '<' in std::format
+#endif
+  RUN(PRINT("{:<20s}\n", "hello"));
+  RUN(PRINT("{:>20s}\n", "hello"));
+#endif
+
+  // =================================================================
+  // 32. Fill on char (ACPP only)
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:*>5c}\n", 'X'));
+  RUN(PRINT("{:*<5c}\n", 'X'));
+  RUN(PRINT("{:*^5c}\n", 'X'));
+#endif
+
+  // =================================================================
+  // 33. Fill on string (ACPP only)
+  // =================================================================
+#if !defined(FMT_SYCL_WA_STR) && defined(FMT_SYCL_BUFFER_PATH_ONLY)
+  RUN(PRINT("{:*<20s}\n", "hello"));
+  RUN(PRINT("{:*>20s}\n", "hello"));
+  RUN(PRINT("{:*^20s}\n", "hello"));
+#endif
+
+  // =================================================================
+  // 34. Align on hex/oct (ACPP only)
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:<10x}\n", 255u));
+  RUN(PRINT("{:>10x}\n", 255u));
+  RUN(PRINT("{:^10x}\n", 255u));
+  RUN(PRINT("{:<10o}\n", 255u));
+  RUN(PRINT("{:>10o}\n", 255u));
+#endif
+
+  // =================================================================
+  // 35. Fill on hex/oct (ACPP only)
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:*<10x}\n", 255u));
+  RUN(PRINT("{:*>10x}\n", 255u));
+  RUN(PRINT("{:*^10x}\n", 255u));
+  RUN(PRINT("{:*<10o}\n", 255u));
+#endif
+
+  // =================================================================
+  // 36. Zero with every type specifier
+  // =================================================================
+  RUN(PRINT("{:d}\n", 0u));
+  RUN(PRINT("{:x}\n", 0u));
+  RUN(PRINT("{:X}\n", 0u));
+  RUN(PRINT("{:o}\n", 0u));
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:b}\n", 0u));
+  RUN(PRINT("{:B}\n", 0u));
+#endif
+  RUN(PRINT("{:f}\n", 0.0));
+  RUN(PRINT("{:e}\n", 0.0));
+  RUN(PRINT("{:g}\n", 0.0));
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:a}\n", 0.0));
+#endif
+
+  // =================================================================
+  // 37. Precision on g (distinct from f)
+  // =================================================================
+  RUN(PRINT("{:.1g}\n", 3.14159));
+  RUN(PRINT("{:.2g}\n", 3.14159));
+  RUN(PRINT("{:.4g}\n", 3.14159));
+  RUN(PRINT("{:.1g}\n", 0.00123));
+  RUN(PRINT("{:.6g}\n", 1234567.0));
+
+  // =================================================================
+  // 38. Alt form forces decimal point with precision 0
+  // =================================================================
+  RUN(PRINT("{:#.0f}\n", 3.0));
+  RUN(PRINT("{:#.0f}\n", 100.0));
+  RUN(PRINT("{:#.0f}\n", 0.0));
+  RUN(PRINT("{:#.0e}\n", 1.0));
+
+  // =================================================================
+  // 39. Float edge values
+  // =================================================================
+  // Note: subnormals (5e-324) are flushed to zero by DPC++ printf.
+  // Only test them on ACPP where buffer formatting handles them.
+  RUN(PRINT("{:e}\n", 2.2250738585072014e-308));   // smallest normal
+  RUN(PRINT("{:e}\n", 1.7976931348623157e+308));   // largest finite
+  RUN(PRINT("{:g}\n", 1.7976931348623157e+308));
+  RUN(PRINT("{:f}\n", 0.0));
+  RUN(PRINT("{:f}\n", -0.0));
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:e}\n", 5e-324));                    // smallest subnormal
+  RUN(PRINT("{:g}\n", 5e-324));
+#endif
+
+  // =================================================================
+  // 40. INT64_MIN with {:d}
+  // =================================================================
+  RUN(PRINT("{:d}\n", static_cast<int64_t>(-9223372036854775807LL - 1)));
+  RUN(PRINT("{}\n", static_cast<int64_t>(-9223372036854775807LL - 1)));
+
+  // =================================================================
+  // 41. Width smaller than content
+  // =================================================================
+  RUN(PRINT("{:3d}\n", 123456));
+  RUN(PRINT("{:2f}\n", 3.14));
+  RUN(PRINT("{:1d}\n", -42));
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:1x}\n", 0xDEAD));
+  RUN(PRINT("{:1b}\n", 255));
+#endif
+
+  // =================================================================
+  // 42. Float with explicit spec on float (not double)
+  // =================================================================
+  RUN(PRINT("{:f}\n", 3.14f));
+  RUN(PRINT("{:e}\n", 3.14f));
+  RUN(PRINT("{:g}\n", 3.14f));
+  RUN(PRINT("{:.2f}\n", 3.14f));
+  RUN(PRINT("{:+.4e}\n", 0.001f));
+  RUN(PRINT("{:012.3f}\n", 42.0f));
+
+  // =================================================================
+  // 43. Dynamic width/precision edge cases (ACPP only)
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:{}d}\n", 42, 0));                   // width=0
+  RUN(PRINT("{:.{}f}\n", 3.14159, 10));            // high precision
+  RUN(PRINT("{:{}c}\n", 'A', 5));                  // width on char
+  RUN(PRINT("{:{}}\n", true, 10));                 // width on bool
+  RUN(PRINT("{:{}.{}f}\n", 3.14, 20, 0));          // precision=0
+#endif
+
+  // =================================================================
+  // 44. Zero-pad interactions
+  // =================================================================
+  RUN(PRINT("{:010d}\n", -42));                    // sign before zeros
+  RUN(PRINT("{:010f}\n", -3.14));                  // sign before zeros
+  RUN(PRINT("{:<010d}\n", 42));                    // left-align wins
+  RUN(PRINT("{:<010d}\n", -42));                   // left-align + negative
+  RUN(PRINT("{:010e}\n", -1.23));
+
+  // =================================================================
+  // 45. Alt form interactions (ACPP only)
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:#010x}\n", 0));                     // 0x prefix with zero
+  RUN(PRINT("{:#o}\n", 0));                        // alt oct with zero
+  RUN(PRINT("{:#b}\n", 1));                        // "0b1"
+  RUN(PRINT("{:#010b}\n", 1));                     // zero-padded alt binary
+  RUN(PRINT("{:#X}\n", 255));                      // uppercase alt hex
+  RUN(PRINT("{:#o}\n", 8));                        // alt oct
+#endif
+
+  // =================================================================
+  // 46. Bool with fill (ACPP only)
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:*<10}\n", true));
+  RUN(PRINT("{:*>10}\n", false));
+  RUN(PRINT("{:*^10}\n", true));
+#endif
+
+  // =================================================================
+  // 47. Align on float a/A (ACPP only)
+  // =================================================================
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:<20a}\n", 3.14));
+  RUN(PRINT("{:>20a}\n", 3.14));
+  RUN(PRINT("{:^20a}\n", 3.14));
+  RUN(PRINT("{:*>20a}\n", 3.14));
 #endif
 
   return 0;

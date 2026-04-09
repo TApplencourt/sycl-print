@@ -73,17 +73,17 @@ KHR_PRINTLN("format string", args...);
 - Otherwise, we support the majority of `std::print` features.
 
 - To ensure atomicity of the print:
-  - On **DPC++**: we disable `dragonbox` by default (use `FMT_SYCL_RELAX_ATOMICITY` to opt in). This means some floats may be formatted differently by `std::print` compared to `sycl::khr::print`. Some features are not implementable while keeping atomicity. If you use a non-atomic feature without the flag, you get a compile-time error with a workaround:
+  - On **DPC++**: we disable `dragonbox` by default (use `FMT_SYCL_BUFFER_PATH_ONLY` to opt in). This means some floats may be formatted differently by `std::print` compared to `sycl::khr::print`. Some features are not implementable while keeping atomicity. If you use a non-atomic feature without the flag, you get a compile-time error with a workaround:
 
 ```
 error: static assertion failed:
   This format string uses non-atomic features ({:b}, {:a}, {:^}, custom fill,
   {:#x} with signed int, etc.).
-  Define FMT_SYCL_RELAX_ATOMICITY to enable
+  Define FMT_SYCL_BUFFER_PATH_ONLY to enable
   (output may interleave across work-items).
 ```
 
-  - On **AdaptiveCpp (ACPP)**: the entire formatted string is accumulated into a fixed-size buffer before a single `sycl::detail::print` call, so atomicity is guaranteed without any flag. `FMT_SYCL_RELAX_ATOMICITY` is **not needed** (and has no effect) on ACPP.
+  - On **AdaptiveCpp (ACPP)**: the entire formatted string is accumulated into a fixed-size buffer before a single `sycl::detail::print` call, so atomicity is guaranteed without any flag. `FMT_SYCL_BUFFER_PATH_ONLY` is **not needed** (and has no effect) on ACPP.
 
 > **ACPP buffer limit**: the output buffer is 255 characters. Output longer than 255 characters per `KHR_PRINT` call is silently truncated.
 ## Build
@@ -96,7 +96,7 @@ icpx -fsycl -std=c++20 my_kernel.cpp -o my_kernel
 acpp --acpp-targets=generic -std=c++20 my_kernel.cpp -o my_kernel
 
 # Enable non-atomic features on DPC++ (full std::format compatibility)
-icpx -fsycl -std=c++20 -DFMT_SYCL_RELAX_ATOMICITY my_kernel.cpp -o my_kernel
+icpx -fsycl -std=c++20 -DFMT_SYCL_BUFFER_PATH_ONLY my_kernel.cpp -o my_kernel
 ```
 
 ## Tests
