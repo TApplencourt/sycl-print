@@ -1700,7 +1700,13 @@ inline void write_arg_with_spec(fmt_buf &out, T arg, int dyn_w = Spec.width,
     apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
   } else if constexpr (etype == 's') {
     fmt_buf content;
-    content.push_str(printf_cast<'s'>(arg));
+    const char *s = printf_cast<'s'>(arg);
+    if (dyn_p >= 0) {
+      for (int k = 0; k < dyn_p && s[k]; k++)
+        content.push(s[k]);
+    } else {
+      content.push_str(s);
+    }
     apply_padding(out, content, Spec.fill_or('<'), Spec.align_or('<'), dyn_w);
   } else if constexpr (is_float_format(etype)) {
     write_float<Spec, etype>(out, arg, dyn_w, dyn_p);

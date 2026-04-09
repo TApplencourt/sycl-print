@@ -412,6 +412,20 @@ int main() {
 #endif
 
   // =================================================================
+  // 31b. String precision
+  // =================================================================
+#ifndef FMT_SYCL_WA_STR
+  RUN(PRINT("{:.5s}\n", "hello world"));           // truncate to 5
+  RUN(PRINT("{:.0s}\n", "hello"));                 // truncate to 0
+  RUN(PRINT("{:.100s}\n", "hello"));               // precision > length
+  RUN(PRINT("{:>10.5s}\n", "hello world"));        // truncate + right-align
+  RUN(PRINT("{:<10.3s}\n", "hello"));              // truncate + left-align
+#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+  RUN(PRINT("{:*^10.5s}\n", "hello world"));       // truncate + fill + center
+#endif
+#endif
+
+  // =================================================================
   // 32. Fill on char (ACPP only)
   // =================================================================
 #ifdef FMT_SYCL_BUFFER_PATH_ONLY
