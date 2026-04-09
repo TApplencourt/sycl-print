@@ -1783,23 +1783,6 @@ inline void print(Args... args) {
   // Accumulate everything into one buffer, then one sycl::detail::print call.
   print_detail::fmt_buf out;
   print_detail::buffer_path::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
-  // sycl::detail::print wraps printf internally, so a literal % in out.data
-  // would be misinterpreted as a format specifier.  Escape % → %% in place.
-  int pct = 0;
-  for (int i = 0; i < out.len; i++)
-    if (out.data[i] == '%')
-      pct++;
-  if (pct > 0) {
-    int newlen = out.len + pct;
-    if (newlen > print_detail::fmt_buf::cap)
-      newlen = print_detail::fmt_buf::cap;
-    for (int src = out.len - 1, dst = newlen - 1; src >= 0 && dst >= 0; src--) {
-      out.data[dst--] = out.data[src];
-      if (out.data[src] == '%' && dst >= 0)
-        out.data[dst--] = '%';
-    }
-    out.len = newlen;
-  }
   out.data[out.len] = '\0';
   ::sycl::detail::print(out.data);
 #else
