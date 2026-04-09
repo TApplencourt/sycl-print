@@ -12,7 +12,7 @@
 // Backend detection: DPC++ vs AdaptiveCpp
 #if defined(__ADAPTIVECPP__) || defined(__HIPSYCL__) || defined(__ACPP__)
   #define FMT_SYCL_ACPP 1
-  #include <sycl/sycl.hpp>  // for sycl::detail::print — works on all ACPP backends
+  #include <sycl/sycl.hpp>
 #else
   #define FMT_SYCL_ACPP 0
   #include <sycl/ext/oneapi/experimental/builtins.hpp>
@@ -2151,7 +2151,16 @@ inline void print(Args... args) {
   // Accumulate everything into one buffer, then one sycl::detail::print call.
   print_detail::fmt_buf out;
   print_detail::acpp_print_impl<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
-  ::sycl::detail::print(out.data);
+  // sycl::detail::print wraps printf internally, so a literal % in out.data
+  // would be misinterpreted as a format specifier.  Escape % → %% first.
+  char escaped[512];
+  int elen = 0;
+  for (int i = 0; i < out.len && elen + 2 < 512; i++) {
+    if (out.data[i] == '%') escaped[elen++] = '%';
+    escaped[elen++] = out.data[i];
+  }
+  escaped[elen] = '\0';
+  ::sycl::detail::print(escaped);
 #else
   if constexpr (sizeof...(Args) == 0) {
     // No args — just emit the literal
