@@ -1697,7 +1697,7 @@ inline void write_arg_with_spec(fmt_buf &out, T arg, int dyn_w = Spec.width,
   } else if constexpr (etype == 'c') {
     fmt_buf content;
     content.push(static_cast<char>(arg));
-    apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+    apply_padding(out, content, Spec.fill_or(), Spec.align_or('<'), dyn_w);
   } else if constexpr (etype == 's') {
     fmt_buf content;
     const char *s = printf_cast<'s'>(arg);
@@ -1707,7 +1707,7 @@ inline void write_arg_with_spec(fmt_buf &out, T arg, int dyn_w = Spec.width,
     } else {
       content.push_str(s);
     }
-    apply_padding(out, content, Spec.fill_or('<'), Spec.align_or('<'), dyn_w);
+    apply_padding(out, content, Spec.fill_or(), Spec.align_or('<'), dyn_w);
   } else if constexpr (is_float_format(etype)) {
     write_float<Spec, etype>(out, arg, dyn_w, dyn_p);
   } else {
