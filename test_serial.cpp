@@ -6,6 +6,7 @@
 //   diff <(./examples_std) <(ONEAPI_DEVICE_SELECTOR=*:cpu ./examples_sycl)
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -24,7 +25,7 @@
     std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)
   #define PRINTLN(fmt_str, ...) \
     std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__) << '\n'
-  #define RUN(...) do { __VA_ARGS__; } while (0)
+  #define RUN(...) do { printf("Test %d\n", ++_test_id); __VA_ARGS__; } while (0)
 #else
   #include "sycl_khr_print.hpp"
   #include <sycl/sycl.hpp>
@@ -33,10 +34,15 @@
   #define PRINTLN(fmt_str, ...) \
     ::sycl::khr::println<fmt_str>(__VA_ARGS__)
   #define RUN(...)                                         \
-    q.submit([&](::sycl::handler &cgh) {                   \
-      cgh.single_task([=]() { __VA_ARGS__; });             \
-    }).wait()
+    do {                                                   \
+      printf("Test %d\n", ++_test_id);                     \
+      q.submit([&](::sycl::handler &cgh) {                 \
+        cgh.single_task([=]() { __VA_ARGS__; });           \
+      }).wait();                                           \
+    } while (0)
 #endif
+
+static int _test_id = 0;
 
 int main() {
 #ifndef USE_STD
