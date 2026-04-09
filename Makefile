@@ -6,14 +6,12 @@ ifdef USE_ACPP
   CXX             := acpp
   SYCLFLAGS       := --acpp-targets=generic
   OPT_LEVELS      := O2
-  RELAX_ATOMICITY :=
+  RELAX_ATOMICITY := -DFMT_SYCL_RELAX_ATOMICITY
 else
   CXX             := icpx
   SYCLFLAGS       := -fsycl
   OPT_LEVELS      := O0 O1 O2 O3
-  # Allow non-atomic format features (dragonbox {}, {:b}, {:a}, {:^}, etc.)
-  # Without this, only atomic + std::format-compatible features are allowed.
-  RELAX_ATOMICITY := -DFMT_SYCL_RELAX_ATOMICITY
+  RELAX_ATOMICITY :=
 endif
 
 # -DWA at O0: work around DPC++ bug (string literal through pointer segfaults)

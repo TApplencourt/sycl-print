@@ -14,6 +14,13 @@
 #include <climits>
 #include <cmath>
 
+// ACPP buffer path guarantees atomicity, so all features are always available.
+#if defined(__ADAPTIVECPP__) || defined(__HIPSYCL__) || defined(__ACPP__)
+#  ifndef FMT_SYCL_RELAX_ATOMICITY
+#    define FMT_SYCL_RELAX_ATOMICITY
+#  endif
+#endif
+
 #ifdef USE_STD
   #include <format>
   #include <iostream>
@@ -96,29 +103,37 @@ int main() {
   // 2. Integer type specifiers
   // ============================================================
   FUZZ_INT("{:d}\n", rand_int)
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_INT("{:x}\n", rand_int)
   FUZZ_INT("{:X}\n", rand_int)
   FUZZ_INT("{:o}\n", rand_int)
   FUZZ_INT("{:b}\n", rand_int)
   FUZZ_INT("{:B}\n", rand_int)
+#endif
   FUZZ_UINT("{:x}\n", rand_uint)
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_UINT("{:b}\n", rand_u64)
+#endif
 
   // ============================================================
   // 3. Alternate form
   // ============================================================
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_INT("{:#x}\n", rand_int)
   FUZZ_INT("{:#X}\n", rand_int)
   FUZZ_INT("{:#o}\n", rand_int)
   FUZZ_INT("{:#b}\n", rand_int)
   FUZZ_UINT("{:#x}\n", rand_uint)
+#endif
 
   // ============================================================
   // 4. Sign
   // ============================================================
   FUZZ_INT("{:+d}\n", rand_int)
   FUZZ_INT("{: d}\n", rand_int)
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_INT("{:+x}\n", rand_int)
+#endif
 
   // ============================================================
   // 5. Width + alignment (integers)
@@ -126,26 +141,34 @@ int main() {
   FUZZ_INT("{:20d}\n", rand_int)
   FUZZ_INT("{:<20d}\n", rand_int)
   FUZZ_INT("{:>20d}\n", rand_int)
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_INT("{:^20d}\n", rand_int)
+#endif
   FUZZ_INT("{:020d}\n", rand_int)
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_INT("{:020x}\n", rand_int)
+#endif
 
   // ============================================================
   // 6. Fill + alignment (integers)
   // ============================================================
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_INT("{:*<20d}\n", rand_int)
   FUZZ_INT("{:*>20d}\n", rand_int)
   FUZZ_INT("{:*^20d}\n", rand_int)
   FUZZ_INT("{:#^20x}\n", rand_int)
   FUZZ_INT("{:*>20b}\n", rand_int)
+#endif
 
   // ============================================================
   // 7. Combined integer specs
   // ============================================================
   FUZZ_INT("{:+020d}\n", rand_int)
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_INT("{:#012x}\n", rand_int)
   FUZZ_INT("{:+#20x}\n", rand_int)
   FUZZ_INT("{:#020b}\n", rand_int)
+#endif
 
   // ============================================================
   // 8. Float type specifiers
@@ -155,8 +178,10 @@ int main() {
   FUZZ_DBL("{:E}\n")
   FUZZ_DBL("{:g}\n")
   FUZZ_DBL("{:G}\n")
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_DBL("{:a}\n")
   FUZZ_DBL("{:A}\n")
+#endif
 
   // ============================================================
   // 9. Float with precision
@@ -178,9 +203,11 @@ int main() {
   // ============================================================
   // 11. Float with fill
   // ============================================================
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_DBL("{:*>20.4f}\n")
   FUZZ_DBL("{:*<20.4f}\n")
   FUZZ_DBL("{:*^20.4f}\n")
+#endif
 
   // ============================================================
   // 12. Char
@@ -212,10 +239,12 @@ int main() {
   // ============================================================
   // 14. Hex float edge values
   // ============================================================
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   FUZZ_DBL("{:a}\n")
   FUZZ_DBL("{:#a}\n")
   FUZZ_DBL("{:A}\n")
   FUZZ_DBL("{:20a}\n")
+#endif
 
   // ============================================================
   // 15. Special float values mixed in
@@ -224,11 +253,13 @@ int main() {
   P("{:f}\n", -1.0 / 0.0);
   P("{:e}\n", 1.0 / 0.0);
   P("{:g}\n", 0.0 / 0.0);
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   P("{:a}\n", 0.0);
   P("{:a}\n", -0.0);
   P("{:+a}\n", 0.0);
   P("{:a}\n", 1.0 / 0.0);
   P("{:A}\n", 0.0 / 0.0);
+#endif
 
   // ============================================================
   // 16. Multiple args — same type
@@ -258,6 +289,7 @@ int main() {
     bool b = (rng() & 1) != 0;
     P("int={} dbl={:.3f} chr={} bool={}\n", i, d, c, b);
   }
+#ifdef FMT_SYCL_RELAX_ATOMICITY
   for (int _i = 0; _i < N_ITER; _i++) {
     unsigned u = rand_uint();
     int64_t big = rand_i64();
@@ -273,6 +305,7 @@ int main() {
     int v = rand_int();
     P("hex={:#010x} bin={:#020b} dec={:+d}\n", v, v, v);
   }
+#endif
   for (int _i = 0; _i < N_ITER; _i++) {
     bool b1 = (rng() & 1) != 0;
     bool b2 = (rng() & 1) != 0;
