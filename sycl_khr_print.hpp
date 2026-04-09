@@ -1643,7 +1643,7 @@ inline void acpp_write_one_arg(fmt_buf& out, const std::tuple<Args...>& all_args
 }
 
 template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
-inline void acpp_print_impl(fmt_buf& out, const std::tuple<Args...>& all_args) {
+inline void format(fmt_buf& out, const std::tuple<Args...>& all_args) {
   constexpr auto info = find_placeholder<Fmt, Pos>();
   if constexpr (!info.found) {
     constexpr size_t end = flen(Fmt);
@@ -1671,7 +1671,7 @@ inline void acpp_print_impl(fmt_buf& out, const std::tuple<Args...>& all_args) {
             : 0;
     constexpr size_t next_auto =
         is_auto ? AutoIdx + 1 + static_cast<size_t>(dyn_used) : AutoIdx;
-    acpp_print_impl<Fmt, info.close + 1, next_auto>(out, all_args);
+    format<Fmt, info.close + 1, next_auto>(out, all_args);
   }
 }
 #endif // FMT_SYCL_ACPP
@@ -1687,7 +1687,7 @@ inline void print(Args... args) {
 #if FMT_SYCL_ACPP
   // Accumulate everything into one buffer, then one sycl::detail::print call.
   print_detail::fmt_buf out;
-  print_detail::acpp_print_impl<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
+  print_detail::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
   // sycl::detail::print wraps printf internally, so a literal % in out.data
   // would be misinterpreted as a format specifier.  Escape % → %% first.
   char escaped[512];
