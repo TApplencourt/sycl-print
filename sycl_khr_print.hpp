@@ -1682,11 +1682,11 @@ inline void write_arg_with_spec(fmt_buf &out, T arg, int dyn_w = Spec.width,
                                 int dyn_p = Spec.precision) {
   using U = std::decay_t<T>;
 
-  // bool default/s → "true"/"false" with padding
+  // bool default/s → "true"/"false" with padding (default left-align like strings)
   if constexpr (std::same_as<U, bool> && (Spec.type == '\0' || Spec.type == 's')) {
     fmt_buf content;
     push_bool(content, arg);
-    apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+    apply_padding(out, content, Spec.fill_or(), Spec.align_or('<'), dyn_w);
     return;
   }
 
