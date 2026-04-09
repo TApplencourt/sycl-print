@@ -211,6 +211,8 @@ int main() {
   RUN(PRINT("Hello from GPU!\n"));
   RUN(PRINT("{{}} is literal braces\n"));
   RUN(PRINT("value={{{}}} done\n", 42));
+  RUN(PRINT("100%% done\n"));                      // literal % via %%
+  RUN(PRINT("{}%% complete\n", 50));               // % after arg
 
   // =================================================================
   // 15. Bool / char as alternate types
