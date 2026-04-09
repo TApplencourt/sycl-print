@@ -929,8 +929,12 @@ template <typename U, char SpecType> consteval char effective_type() {
 // Device-side buffer (used by ACPP accumulator path)
 // ============================================================
 
+#ifndef KHR_SYCL_PRINT_BUFFER_SIZE
+#define KHR_SYCL_PRINT_BUFFER_SIZE 255
+#endif
+
 struct fmt_buf {
-  static constexpr int cap = 255;
+  static constexpr int cap = KHR_SYCL_PRINT_BUFFER_SIZE;
   char data[cap + 1]{};
   int len = 0;
   void push(char c) {
@@ -1781,9 +1785,10 @@ inline void print(Args... args) {
   print_detail::buffer_path::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
   // sycl::detail::print wraps printf internally, so a literal % in out.data
   // would be misinterpreted as a format specifier.  Escape % → %% first.
-  char escaped[512];
+  constexpr int esc_cap = KHR_SYCL_PRINT_BUFFER_SIZE * 2 + 1;
+  char escaped[esc_cap];
   int elen = 0;
-  for (int i = 0; i < out.len && elen + 2 < 512; i++) {
+  for (int i = 0; i < out.len && elen + 2 < esc_cap; i++) {
     if (out.data[i] == '%')
       escaped[elen++] = '%';
     escaped[elen++] = out.data[i];

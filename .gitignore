@@ -1,7 +1,11 @@
-examples_std_*
-examples_sycl_*
+test_std_*
+test_sycl_*
+serial_std_*
+serial_sycl_*
 fuzz_std_*
 fuzz_sycl_*
 repro_O0
 repro_O1
 a.out
+example_readme*
+!example_readme*.cpp

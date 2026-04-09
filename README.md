@@ -67,46 +67,57 @@ KHR_PRINT("format string", args...);
 KHR_PRINTLN("format string", args...);
 ```
 
-### Difference from `std::print` / `std::println`
+### Backend differences
 
-- We require a compile-time format string.
-- Otherwise, we support the majority of `std::print` features.
+**AdaptiveCpp (ACPP)** supports the full `std::format` spec. The entire output is accumulated into a buffer before printing, so all features work atomically.
 
-- To ensure atomicity of the print:
-  - On **DPC++**: we disable `dragonbox` by default (use `FMT_SYCL_BUFFER_PATH_ONLY` to opt in). This means some floats may be formatted differently by `std::print` compared to `sycl::khr::print`. Some features are not implementable while keeping atomicity. If you use a non-atomic feature without the flag, you get a compile-time error with a workaround:
+**DPC++** uses a single `printf` call with format specifiers. This is atomic but limits which format features are available. Unsupported features produce a compile-time error:
 
 ```
 error: static assertion failed:
-  This format string uses non-atomic features ({:b}, {:a}, {:^}, custom fill,
-  {:#x} with signed int, etc.).
-  Define FMT_SYCL_BUFFER_PATH_ONLY to enable
-  (output may interleave across work-items).
+  This format string uses features not supported on DPC++
+  ({:b}, {:a}, {:^}, custom fill, {:#x} with signed int,
+  dynamic width/precision, dragonbox default float).
+  These features are only available on ACPP.
 ```
 
-  - On **AdaptiveCpp (ACPP)**: the entire formatted string is accumulated into a fixed-size buffer before a single `sycl::detail::print` call, so atomicity is guaranteed without any flag. `FMT_SYCL_BUFFER_PATH_ONLY` is **not needed** (and has no effect) on ACPP.
+Features only available on ACPP:
+- Binary format (`{:b}`, `{:B}`)
+- Hex float (`{:a}`, `{:A}`)
+- Center alignment (`{:^}`)
+- Custom fill characters (`{:*>10}`)
+- Signed integers with hex/oct (`{:x}` with `int`)
+- Alternate hex (`{:#x}` with signed int)
+- Dynamic width/precision (`{:{}}`, `{:.{}}`)
+- Dragonbox shortest-decimal float (default `{}` with floats)
 
-> **ACPP buffer limit**: the output buffer is 255 characters. Output longer than 255 characters per `KHR_PRINT` call is silently truncated.
+### ACPP buffer limit
+
+The output buffer defaults to 255 characters. Output longer than that per `KHR_PRINT` call is silently truncated. Override with:
+
+```cpp
+#define KHR_SYCL_PRINT_BUFFER_SIZE 512
+#include "sycl_khr_print.hpp"
+```
+
 ## Build
 
 ```bash
 # DPC++ (Intel)
 icpx -fsycl -std=c++20 my_kernel.cpp -o my_kernel
 
-# AdaptiveCpp (generic/SSCP backend — dragonbox always on, no flag needed)
+# AdaptiveCpp (generic/SSCP backend)
 acpp --acpp-targets=generic -std=c++20 my_kernel.cpp -o my_kernel
-
-# Enable non-atomic features on DPC++ (full std::format compatibility)
-icpx -fsycl -std=c++20 -DFMT_SYCL_BUFFER_PATH_ONLY my_kernel.cpp -o my_kernel
 ```
 
 ## Tests
 
 ```bash
-make test              # Run all tests
+make test              # Run all tests (format + fuzz + ffast-math)
 ```
 Or individually:
 ```bash
-make test-interleave   # Atomicity test (multi-work-item)
-make test-examples     # Format correctness (diff against std::format)
+make test-format       # Format correctness (diff against std::format)
 make test-fuzz         # Fuzz with random values
+make test-ffast        # Fuzz with -ffast-math
 ```
