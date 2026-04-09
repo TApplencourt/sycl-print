@@ -1302,15 +1302,13 @@ inline char hex_digit(int d, bool upper) {
   return static_cast<char>((upper ? 'A' : 'a') + d - 10);
 }
 
-// Format hex float from IEEE 754 bits (fixes {:a} 0x prefix difference)
+// Build hex float content into buf — shared by DPC++ and ACPP paths.
 template <format_spec Spec, char EffType, typename T>
-inline void format_hex_float(T arg) {
+inline void hex_float_to_buf(fmt_buf& content, T arg) {
   static_assert(EffType == 'a' || EffType == 'A',
-                "format_hex_float: EffType must be 'a' or 'A'");
+                "hex_float_to_buf: EffType must be 'a' or 'A'");
   double val = static_cast<double>(arg);
   constexpr bool upper = (EffType == 'A');
-
-  fmt_buf content;
 
   // Extract IEEE 754 bits (must do before sign check for -0.0)
   uint64_t bits = __builtin_bit_cast(uint64_t, val);
@@ -1330,8 +1328,6 @@ inline void format_hex_float(T arg) {
   if (biased_exp == 0x7FF) {
     content.push_str((mantissa == 0) ? (upper ? "INF" : "inf")
                                      : (upper ? "NAN" : "nan"));
-    apply_padding_and_print(content, Spec.fill_or(),
-                            Spec.align_or(), Spec.width);
     return;
   }
 
@@ -1343,8 +1339,6 @@ inline void format_hex_float(T arg) {
       content.push(upper ? 'P' : 'p');
       content.push('+');
       content.push('0');
-      apply_padding_and_print(content, Spec.fill_or(),
-                              Spec.align_or(), Spec.width);
       return;
     }
     content.push('0'); // subnormal
@@ -1377,7 +1371,13 @@ inline void format_hex_float(T arg) {
     while (exponent > 0) { tmp[n++] = static_cast<char>('0' + exponent % 10); exponent /= 10; }
     for (int i = n - 1; i >= 0; i--) content.push(tmp[i]);
   }
+}
 
+// Format hex float from IEEE 754 bits (fixes {:a} 0x prefix difference)
+template <format_spec Spec, char EffType, typename T>
+inline void format_hex_float(T arg) {
+  fmt_buf content;
+  hex_float_to_buf<Spec, EffType>(content, arg);
   apply_padding_and_print(content, Spec.fill_or(),
                           Spec.align_or(), Spec.width);
 }
@@ -1997,6 +1997,14 @@ inline void acpp_fmt_g(fmt_buf& out, double val, int prec, bool upper, bool alt)
 template <format_spec Spec, char EffType, typename T>
 inline void acpp_write_float(fmt_buf& out, T arg, int dyn_w = Spec.width,
                              int dyn_p = Spec.precision) {
+  // Hex float: sign and content handled entirely by hex_float_to_buf
+  if constexpr (EffType == 'a' || EffType == 'A') {
+    fmt_buf content;
+    hex_float_to_buf<Spec, EffType>(content, arg);
+    acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+    return;
+  }
+
   constexpr bool upper = (EffType == 'F' || EffType == 'E' || EffType == 'G');
   double val = static_cast<double>(arg);
   int prec = dyn_p >= 0 ? dyn_p : (Spec.precision >= 0 ? Spec.precision : 6);
@@ -2020,9 +2028,6 @@ inline void acpp_write_float(fmt_buf& out, T arg, int dyn_w = Spec.width,
     acpp_fmt_sci(digits, val, prec, upper, Spec.alt);
   } else if (EffType == 'g' || EffType == 'G') {
     acpp_fmt_g(digits, val, prec, upper, Spec.alt);
-  } else {
-    // a/A — not yet implemented
-    acpp_write(digits, "<?f>");
   }
 
   // Assemble: sign + optional zero-fill + digits
