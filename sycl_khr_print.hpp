@@ -1147,6 +1147,7 @@ inline auto printf_cast(T arg) {
     return arg;
 }
 
+#if !FMT_SYCL_ACPP
 // ============================================================
 // Atomic print — single ::sycl::ext::oneapi::experimental::printf call for the entire format
 // ============================================================
@@ -1288,6 +1289,7 @@ inline void print_combined_dispatch(Args... args) {
   walk_and_emit<Fmt, combined, 0, 0, Args...>(
       std::tuple<Args...>(args...));
 }
+#endif // !FMT_SYCL_ACPP
 
 #if FMT_SYCL_ACPP
 // ============================================================
