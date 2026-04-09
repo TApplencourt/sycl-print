@@ -1245,28 +1245,23 @@ consteval auto build_combined_printf_fmt() {
   return result;
 }
 
-// Emit a combined printf format string with N args in one ::sycl::ext::oneapi::experimental::printf call.
+// Unpack a tuple of printf-cast args and emit a single printf call.
 template <fixed_string CombinedFmt, size_t... FmtIs, typename... CastArgs>
-inline void emit_combined_impl(std::index_sequence<FmtIs...>, CastArgs... args) {
+inline void emit_printf_impl(std::index_sequence<FmtIs...>, CastArgs... args) {
   static constexpr char s[] = {CombinedFmt.data[FmtIs]..., '\0'};
   ::sycl::ext::oneapi::experimental::printf(s, args...);
 }
 
-template <fixed_string CombinedFmt, typename... CastArgs>
-inline void emit_combined(CastArgs... args) {
-  emit_combined_impl<CombinedFmt>(
-      std::make_index_sequence<flen(CombinedFmt)>{}, args...);
-}
-
 // Walk placeholders at compile time, accumulate printf-cast args in
-// placeholder order (handles positional: "{0} {1} {0}" → a, b, a),
-// then emit everything in a single ::sycl::ext::oneapi::experimental::printf call.
-template <fixed_string Fmt, fixed_string CombinedFmt,
-          size_t Pos, size_t AutoIdx, typename... Args, typename... CastArgs>
-inline void walk_and_emit(std::tuple<Args...> all_args, CastArgs... cast_args) {
+// placeholder order (handles positional: "{0} {1} {0}" → a, b, a).
+// Returns a tuple of all cast args.
+template <fixed_string Fmt, size_t Pos, size_t AutoIdx,
+          typename... Args, typename... CastArgs>
+inline auto collect_printf_args(std::tuple<Args...> all_args,
+                                CastArgs... cast_args) {
   constexpr auto info = find_placeholder<Fmt, Pos>();
   if constexpr (!info.found) {
-    emit_combined<CombinedFmt>(cast_args...);
+    return std::tuple(cast_args...);
   } else {
     constexpr bool is_auto = (info.index < 0);
     constexpr size_t idx = is_auto ? AutoIdx : static_cast<size_t>(info.index);
@@ -1277,17 +1272,25 @@ inline void walk_and_emit(std::tuple<Args...> all_args, CastArgs... cast_args) {
             : format_spec{};
     constexpr char etype = effective_type<U, spec.type>();
     constexpr size_t next_auto = is_auto ? AutoIdx + 1 : AutoIdx;
-    walk_and_emit<Fmt, CombinedFmt, info.close + 1, next_auto, Args...>(
+    return collect_printf_args<Fmt, info.close + 1, next_auto, Args...>(
         all_args, cast_args...,
         printf_cast<etype>(std::get<idx>(all_args)));
   }
 }
 
+template <fixed_string CombinedFmt, typename Tuple, size_t... Is>
+inline void emit_printf(Tuple& t, std::index_sequence<Is...>) {
+  emit_printf_impl<CombinedFmt>(
+      std::make_index_sequence<flen(CombinedFmt)>{}, std::get<Is>(t)...);
+}
+
 template <fixed_string Fmt, typename... Args>
 inline void print_combined_dispatch(Args... args) {
   constexpr auto combined = build_combined_printf_fmt<Fmt, Args...>();
-  walk_and_emit<Fmt, combined, 0, 0, Args...>(
+  auto cast_args = collect_printf_args<Fmt, 0, 0, Args...>(
       std::tuple<Args...>(args...));
+  emit_printf<combined>(cast_args,
+      std::make_index_sequence<std::tuple_size_v<decltype(cast_args)>>{});
 }
 #endif // !FMT_SYCL_ACPP
 
