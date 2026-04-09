@@ -36,10 +36,10 @@ all: test
 build: $(ALL_BINS)
 
 serial_std_%: tests.cpp
-	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(WA_$*) $< -o $@
+	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
 
 serial_sycl_%: tests.cpp sycl_khr_print.hpp
-	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
+	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
 
 fuzz_std_%: fuzz.cpp
 	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(RELAX_ATOMICITY) $(WA_$*) $< -o $@
