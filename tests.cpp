@@ -10,9 +10,8 @@
 #include <cstdlib>
 #include <cstring>
 
-// FMT_SYCL_RELAX_ATOMICITY was originally a DPC++-only opt-in.
-// For std::format and ACPP, all features are always available.
-#if defined(USE_STD) || defined(__ADAPTIVECPP__) || defined(__HIPSYCL__) || defined(__ACPP__)
+// ACPP buffer path guarantees atomicity, so all features are always available.
+#if defined(__ADAPTIVECPP__) || defined(__HIPSYCL__) || defined(__ACPP__)
 #  ifndef FMT_SYCL_RELAX_ATOMICITY
 #    define FMT_SYCL_RELAX_ATOMICITY
 #  endif
@@ -25,7 +24,8 @@
     std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)
   #define PRINTLN(fmt_str, ...) \
     std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__) << '\n'
-  #define RUN(...) do { printf("Test %d\n", ++_test_id); __VA_ARGS__; } while (0)
+  #define RUN(...) do { printf("Test %d\n", ++_test_id); \
+    for (int _i = 0; _i < N; _i++) { __VA_ARGS__; } } while (0)
 #else
   #include "sycl_khr_print.hpp"
   #include <sycl/sycl.hpp>
@@ -36,13 +36,14 @@
   #define RUN(...)                                         \
     do {                                                   \
       printf("Test %d\n", ++_test_id);                     \
-      q.submit([&](::sycl::handler &cgh) {                 \
-        cgh.single_task([=]() { __VA_ARGS__; });           \
+      q.parallel_for(N, [=](::sycl::id<1>) {              \
+        __VA_ARGS__;                                       \
       }).wait();                                           \
     } while (0)
 #endif
 
 static int _test_id = 0;
+constexpr int N = 2;
 
 int main() {
 #ifndef USE_STD
