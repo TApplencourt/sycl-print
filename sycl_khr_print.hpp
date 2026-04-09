@@ -1303,12 +1303,14 @@ inline void print_combined_dispatch(Args... args) {
 // work-item, no interleaving between format args.
 // ============================================================
 
-inline void acpp_write(fmt_buf& out, const char* s) {
+namespace buffer {
+
+inline void write(fmt_buf& out, const char* s) {
   while (*s) out.push(*s++);
 }
 
 template <typename T>
-inline void acpp_write_decimal(fmt_buf& out, T val) {
+inline void write_decimal(fmt_buf& out, T val) {
   char tmp[22]{};
   int i = 20;
   using U = std::make_unsigned_t<T>;
@@ -1323,18 +1325,18 @@ inline void acpp_write_decimal(fmt_buf& out, T val) {
   if (uval == 0) { tmp[i--] = '0'; }
   else { while (uval > 0) { tmp[i--] = '0' + static_cast<char>(uval % 10); uval /= 10; } }
   if (neg) tmp[i--] = '-';
-  acpp_write(out, tmp + i + 1);
+  write(out, tmp + i + 1);
 }
 
 template <typename T>
-inline void acpp_write_arg_default(fmt_buf& out, T arg) {
+inline void write_arg_default(fmt_buf& out, T arg) {
   using U = std::decay_t<T>;
   if constexpr (std::same_as<U, bool>) {
-    acpp_write(out, arg ? "true" : "false");
+    write(out, arg ? "true" : "false");
   } else if constexpr (std::same_as<U, char>) {
     out.push(arg);
   } else if constexpr (std::signed_integral<U> || std::unsigned_integral<U>) {
-    acpp_write_decimal(out, arg);
+    write_decimal(out, arg);
   } else if constexpr (std::floating_point<U>) {
     // Dragonbox always available on ACPP (buffer guarantees atomicity).
     U val = arg;
@@ -1347,14 +1349,14 @@ inline void acpp_write_arg_default(fmt_buf& out, T arg) {
   } else if constexpr (std::is_pointer_v<U>) {
     using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
     if constexpr (std::same_as<Pointee, char>)
-      acpp_write(out, arg);
+      write(out, arg);
     else
-      acpp_write(out, "<?p>"); // Level 4: pointer
+      write(out, "<?p>"); // Level 4: pointer
   }
 }
 
 template <fixed_string Lit>
-inline void acpp_write_literal(fmt_buf& out) {
+inline void write_literal(fmt_buf& out) {
   constexpr size_t len = flen(Lit);
   if constexpr (len > 0) {
     for (size_t i = 0; i < len; i++) out.push(Lit[i]);
@@ -1362,33 +1364,33 @@ inline void acpp_write_literal(fmt_buf& out) {
 }
 
 // Append fmt_buf src into accumulator out.
-inline void acpp_append_buf(fmt_buf& out, const fmt_buf& src) {
+inline void append_buf(fmt_buf& out, const fmt_buf& src) {
   for (int i = 0; i < src.len; i++) out.push(src.data[i]);
 }
 
 // Apply fill+alignment around content and append to out.
-inline void acpp_apply_padding(fmt_buf& out, const fmt_buf& content,
+inline void apply_padding(fmt_buf& out, const fmt_buf& content,
                                char fill, char align, int width) {
   int pad = width > content.len ? width - content.len : 0;
   if (pad == 0) {
-    acpp_append_buf(out, content);
+    append_buf(out, content);
   } else if (align == '<') {
-    acpp_append_buf(out, content);
+    append_buf(out, content);
     for (int i = 0; i < pad; i++) out.push(fill);
   } else if (align == '^') {
     for (int i = 0; i < pad / 2; i++) out.push(fill);
-    acpp_append_buf(out, content);
+    append_buf(out, content);
     for (int i = pad / 2; i < pad; i++) out.push(fill);
   } else { // '>' (default)
     for (int i = 0; i < pad; i++) out.push(fill);
-    acpp_append_buf(out, content);
+    append_buf(out, content);
   }
 }
 
 // Format a single integer argument with full spec support into out.
 // Mirrors format_int_buf but targets the accumulator directly.
 template <format_spec Spec, char EffType, typename T>
-inline void acpp_write_int(fmt_buf& out, T arg, int width = Spec.width) {
+inline void write_int(fmt_buf& out, T arg, int width = Spec.width) {
   static_assert(is_int_format(EffType));
   using U = std::decay_t<T>;
   using Uns = std::conditional_t<(sizeof(U) <= 4), unsigned, unsigned long long>;
@@ -1431,14 +1433,14 @@ inline void acpp_write_int(fmt_buf& out, T arg, int width = Spec.width) {
   if (zpad && width > content_w) content.push_n('0', width - content_w);
   for (int i = 0; i < digits.len; i++) content.push(digits.data[i]);
 
-  acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), width);
+  apply_padding(out, content, Spec.fill_or(), Spec.align_or(), width);
 }
 
 // ── Float formatting helpers ──────────────────────────────────────────────────
 
 // Format a non-negative finite double in fixed notation into buf.
 // Handles up to prec=15 safely (uint64_t scale limit ~1e15 for val<1e4).
-inline void acpp_fmt_fixed(fmt_buf& out, double val, int prec, bool alt = false) {
+inline void fmt_fixed(fmt_buf& out, double val, int prec, bool alt = false) {
   // Compute scale = 10^prec
   double scale = 1.0;
   for (int i = 0; i < prec; i++) scale *= 10.0;
@@ -1450,7 +1452,7 @@ inline void acpp_fmt_fixed(fmt_buf& out, double val, int prec, bool alt = false)
   uint64_t ipart = total / iscale;
   uint64_t frac  = total % iscale;
 
-  acpp_write_decimal(out, ipart);
+  write_decimal(out, ipart);
 
   if (prec > 0 || alt) {
     out.push('.');
@@ -1467,7 +1469,7 @@ inline void acpp_fmt_fixed(fmt_buf& out, double val, int prec, bool alt = false)
 }
 
 // Format a non-negative finite double in scientific notation into buf.
-inline void acpp_fmt_sci(fmt_buf& out, double val, int prec, bool upper, bool alt = false) {
+inline void fmt_sci(fmt_buf& out, double val, int prec, bool upper, bool alt = false) {
   int exp = 0;
   if (val == 0.0) {
     exp = 0;
@@ -1479,24 +1481,24 @@ inline void acpp_fmt_sci(fmt_buf& out, double val, int prec, bool upper, bool al
     // to 10.00000), detect it by pre-formatting and adjust before the real emit.
     {
       fmt_buf check;
-      acpp_fmt_fixed(check, val, prec, false);
+      fmt_fixed(check, val, prec, false);
       if (check.len >= 2 && check.data[0] == '1' && check.data[1] == '0') {
         val /= 10.0;
         exp++;
       }
     }
   }
-  acpp_fmt_fixed(out, val, prec, alt);
+  fmt_fixed(out, val, prec, alt);
   out.push(upper ? 'E' : 'e');
   out.push(exp >= 0 ? '+' : '-');
   if (exp < 0) exp = -exp;
   if (exp < 10) out.push('0');  // at least 2 exponent digits
-  acpp_write_decimal(out, static_cast<unsigned>(exp));
+  write_decimal(out, static_cast<unsigned>(exp));
 }
 
 // Remove trailing zeros (and decimal point) from the fractional part of buf,
 // stopping at 'e'/'E' if present (scientific notation).
-inline void acpp_trim_trailing_zeros(fmt_buf& buf) {
+inline void trim_trailing_zeros(fmt_buf& buf) {
   int dot_pos = -1;
   int e_pos = buf.len;
   for (int i = 0; i < buf.len; i++) {
@@ -1515,7 +1517,7 @@ inline void acpp_trim_trailing_zeros(fmt_buf& buf) {
 
 // Format g/G: shortest of fixed/scientific, remove trailing zeros unless alt.
 // prec = significant digits (default 6, min 1).
-inline void acpp_fmt_g(fmt_buf& out, double val, int prec, bool upper, bool alt) {
+inline void fmt_g(fmt_buf& out, double val, int prec, bool upper, bool alt) {
   if (prec == 0) prec = 1;
   int exp = 0;
   if (val != 0.0) {
@@ -1527,23 +1529,23 @@ inline void acpp_fmt_g(fmt_buf& out, double val, int prec, bool upper, bool alt)
   if (exp >= -4 && exp < prec) {
     int f_prec = prec - (exp + 1);
     if (f_prec < 0) f_prec = 0;
-    acpp_fmt_fixed(tmp_buf, val, f_prec, alt);
+    fmt_fixed(tmp_buf, val, f_prec, alt);
   } else {
-    acpp_fmt_sci(tmp_buf, val, prec - 1, upper, alt);
+    fmt_sci(tmp_buf, val, prec - 1, upper, alt);
   }
-  if (!alt) acpp_trim_trailing_zeros(tmp_buf);
-  acpp_append_buf(out, tmp_buf);
+  if (!alt) trim_trailing_zeros(tmp_buf);
+  append_buf(out, tmp_buf);
 }
 
 // Format a float/double argument with full spec (width, prec, sign, fill, zero-pad).
 template <format_spec Spec, char EffType, typename T>
-inline void acpp_write_float(fmt_buf& out, T arg, int dyn_w = Spec.width,
+inline void write_float(fmt_buf& out, T arg, int dyn_w = Spec.width,
                              int dyn_p = Spec.precision) {
   // Hex float: sign and content handled entirely by hex_float_to_buf
   if constexpr (EffType == 'a' || EffType == 'A') {
     fmt_buf content;
     hex_float_to_buf<Spec, EffType>(content, arg);
-    acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+    apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
     return;
   }
 
@@ -1565,11 +1567,11 @@ inline void acpp_write_float(fmt_buf& out, T arg, int dyn_w = Spec.width,
     digits.push_str(mant == 0 ? (upper ? "INF" : "inf")
                                : (upper ? "NAN" : "nan"));
   } else if (EffType == 'f' || EffType == 'F') {
-    acpp_fmt_fixed(digits, val, prec, Spec.alt);
+    fmt_fixed(digits, val, prec, Spec.alt);
   } else if (EffType == 'e' || EffType == 'E') {
-    acpp_fmt_sci(digits, val, prec, upper, Spec.alt);
+    fmt_sci(digits, val, prec, upper, Spec.alt);
   } else if (EffType == 'g' || EffType == 'G') {
-    acpp_fmt_g(digits, val, prec, upper, Spec.alt);
+    fmt_g(digits, val, prec, upper, Spec.alt);
   }
 
   // Assemble: sign + optional zero-fill + digits
@@ -1579,16 +1581,16 @@ inline void acpp_write_float(fmt_buf& out, T arg, int dyn_w = Spec.width,
   fmt_buf content;
   if (sign_ch) content.push(sign_ch);
   if (zpad && dyn_w > content_w) content.push_n('0', dyn_w - content_w);
-  acpp_append_buf(content, digits);
+  append_buf(content, digits);
 
-  acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+  apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
 }
 
 // ── Dispatch with spec ────────────────────────────────────────────────────────
 
 // Format one argument with an explicit format spec into out.
 template <format_spec Spec, bool Dynamic = false, typename T>
-inline void acpp_write_arg_with_spec(fmt_buf& out, T arg,
+inline void write_arg_with_spec(fmt_buf& out, T arg,
                                      int dyn_w = Spec.width,
                                      int dyn_p = Spec.precision) {
   using U = std::decay_t<T>;
@@ -1597,31 +1599,31 @@ inline void acpp_write_arg_with_spec(fmt_buf& out, T arg,
   if constexpr (std::same_as<U, bool> && (Spec.type == '\0' || Spec.type == 's')) {
     fmt_buf content;
     push_bool(content, arg);
-    acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+    apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
     return;
   }
 
   constexpr char etype = effective_type<U, Spec.type>();
 
   if constexpr (is_int_format(etype)) {
-    acpp_write_int<Spec, etype>(out, arg, dyn_w);
+    write_int<Spec, etype>(out, arg, dyn_w);
   } else if constexpr (etype == 'c') {
     fmt_buf content;
     content.push(static_cast<char>(arg));
-    acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+    apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
   } else if constexpr (etype == 's') {
     fmt_buf content;
     content.push_str(printf_cast<'s'>(arg));
-    acpp_apply_padding(out, content, Spec.fill_or('<'), Spec.align_or('<'), dyn_w);
+    apply_padding(out, content, Spec.fill_or('<'), Spec.align_or('<'), dyn_w);
   } else if constexpr (is_float_format(etype)) {
-    acpp_write_float<Spec, etype>(out, arg, dyn_w, dyn_p);
+    write_float<Spec, etype>(out, arg, dyn_w, dyn_p);
   } else {
-    acpp_write(out, "<?>");
+    write(out, "<?>");
   }
 }
 
 template <fixed_string Fmt, placeholder_info Info, size_t AutoIdx, typename... Args>
-inline void acpp_write_one_arg(fmt_buf& out, const std::tuple<Args...>& all_args) {
+inline void write_one_arg(fmt_buf& out, const std::tuple<Args...>& all_args) {
   constexpr size_t idx = Info.index >= 0 ? static_cast<size_t>(Info.index) : 0;
   auto arg = std::get<idx>(all_args);
   if constexpr (Info.has_spec && Info.close > Info.spec_beg) {
@@ -1638,12 +1640,12 @@ inline void acpp_write_one_arg(fmt_buf& out, const std::tuple<Args...>& all_args
         constexpr size_t pi = static_cast<size_t>(spec.prec_arg);
         dyn_p = static_cast<int>(std::get<pi>(all_args));
       }
-      acpp_write_arg_with_spec<spec, true>(out, arg, dyn_w, dyn_p);
+      write_arg_with_spec<spec, true>(out, arg, dyn_w, dyn_p);
     } else {
-      acpp_write_arg_with_spec<spec>(out, arg);
+      write_arg_with_spec<spec>(out, arg);
     }
   } else {
-    acpp_write_arg_default(out, arg);
+    write_arg_default(out, arg);
   }
 }
 
@@ -1655,19 +1657,19 @@ inline void format(fmt_buf& out, const std::tuple<Args...>& all_args) {
     constexpr size_t sz = literal_out_size<Fmt, Pos, end>();
     if constexpr (sz > 0) {
       constexpr auto lit = make_literal<Fmt, Pos, end>();
-      acpp_write_literal<lit>(out);
+      write_literal<lit>(out);
     }
   } else {
     constexpr size_t prefix_sz = literal_out_size<Fmt, Pos, info.open>();
     if constexpr (prefix_sz > 0) {
       constexpr auto prefix = make_literal<Fmt, Pos, info.open>();
-      acpp_write_literal<prefix>(out);
+      write_literal<prefix>(out);
     }
     constexpr bool is_auto = (info.index < 0);
     constexpr auto resolved = placeholder_info{
         info.open, info.close, info.spec_beg, info.has_spec, info.found,
         is_auto ? static_cast<int>(AutoIdx) : info.index};
-    acpp_write_one_arg<Fmt, resolved, AutoIdx>(out, all_args);
+    write_one_arg<Fmt, resolved, AutoIdx>(out, all_args);
 
     constexpr int dyn_start = static_cast<int>(AutoIdx) + 1;
     constexpr int dyn_used =
@@ -1679,6 +1681,7 @@ inline void format(fmt_buf& out, const std::tuple<Args...>& all_args) {
     format<Fmt, info.close + 1, next_auto>(out, all_args);
   }
 }
+} // namespace buffer
 #endif // FMT_SYCL_ACPP
 
 } // namespace print_detail
@@ -1692,7 +1695,7 @@ inline void print(Args... args) {
 #if FMT_SYCL_ACPP
   // Accumulate everything into one buffer, then one sycl::detail::print call.
   print_detail::fmt_buf out;
-  print_detail::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
+  print_detail::buffer::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
   // sycl::detail::print wraps printf internally, so a literal % in out.data
   // would be misinterpreted as a format specifier.  Escape % → %% first.
   char escaped[512];
