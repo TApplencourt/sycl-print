@@ -763,30 +763,6 @@ consteval auto make_literal() {
   return result;
 }
 
-// ============================================================
-// emit_literal — printf a fixed_string ensuring constant addr space
-// ============================================================
-
-// Expand the fixed_string into a static constexpr char[] via index_sequence.
-// This guarantees the SYCL compiler places it in the constant address space.
-template <fixed_string Lit, size_t... Is>
-inline void emit_literal_impl(std::index_sequence<Is...>) {
-  static constexpr char s[] = {Lit.data[Is]..., '\0'};
-#if FMT_SYCL_ACPP
-  ::sycl::detail::print(s);
-#else
-  ::sycl::ext::oneapi::experimental::printf(s);
-#endif
-}
-
-template <fixed_string Lit>
-inline void emit_literal() {
-  constexpr size_t len = flen(Lit);
-  if constexpr (len > 0) {
-    emit_literal_impl<Lit>(std::make_index_sequence<len>{});
-  }
-}
-
 // Cast an integer to its printf-compatible type (int/long long or unsigned variants)
 template <typename U>
 inline auto signed_int_cast(U arg) {
@@ -959,59 +935,6 @@ consteval char effective_type() {
   }
 }
 
-// Buffer for building printf format strings at compile time
-struct printf_fmt_buf {
-  char data[32]{};
-  size_t len = 0;
-
-  constexpr void push(char c) { data[len++] = c; }
-  constexpr void push_int(int val) {
-    if (val == 0) { push('0'); return; }
-    char tmp[10]{};
-    int n = 0;
-    while (val > 0) { tmp[n++] = '0' + val % 10; val /= 10; }
-    for (int j = n - 1; j >= 0; j--) push(tmp[j]);
-  }
-};
-
-// Build the printf format string: %[flags][width][.precision][length]type
-template <format_spec Spec, char EffType, bool Is64>
-consteval printf_fmt_buf build_printf_fmt() {
-  static_assert(is_type_char(EffType) || EffType == 'u',
-                "build_printf_fmt: EffType must be a valid format type character");
-  printf_fmt_buf buf;
-  buf.push('%');
-
-  // Flags
-  if (Spec.align == '<') buf.push('-');
-  if (Spec.sign == '+') buf.push('+');
-  else if (Spec.sign == ' ') buf.push(' ');
-  if (Spec.alt) buf.push('#');
-  if (Spec.zero_pad && Spec.align != '<') buf.push('0');
-
-  // Width
-  if (Spec.width > 0) buf.push_int(Spec.width);
-
-  // Precision
-  if (Spec.precision >= 0) {
-    buf.push('.');
-    buf.push_int(Spec.precision);
-  }
-
-  // Length modifier for 64-bit integers
-  bool is_int = (EffType == 'd' || EffType == 'u' ||
-                 EffType == 'x' || EffType == 'X' || EffType == 'o');
-  if (is_int && Is64) {
-    buf.push('l');
-    buf.push('l');
-  }
-
-  // Type
-  buf.push(EffType);
-  buf.data[buf.len] = '\0';
-  return buf;
-}
-
 // ============================================================
 // Device-side buffer (used by ACPP accumulator path)
 // ============================================================
@@ -1148,6 +1071,81 @@ inline auto printf_cast(T arg) {
 }
 
 #if !FMT_SYCL_ACPP
+namespace specifiers_path {
+
+// ============================================================
+// emit_literal — printf a fixed_string ensuring constant addr space
+// ============================================================
+
+// Expand the fixed_string into a static constexpr char[] via index_sequence.
+// This guarantees the SYCL compiler places it in the constant address space.
+template <fixed_string Lit, size_t... Is>
+inline void emit_literal_impl(std::index_sequence<Is...>) {
+  static constexpr char s[] = {Lit.data[Is]..., '\0'};
+  ::sycl::ext::oneapi::experimental::printf(s);
+}
+
+template <fixed_string Lit>
+inline void emit_literal() {
+  constexpr size_t len = flen(Lit);
+  if constexpr (len > 0) {
+    emit_literal_impl<Lit>(std::make_index_sequence<len>{});
+  }
+}
+
+// Buffer for building printf format strings at compile time
+struct printf_fmt_buf {
+  char data[32]{};
+  size_t len = 0;
+
+  constexpr void push(char c) { data[len++] = c; }
+  constexpr void push_int(int val) {
+    if (val == 0) { push('0'); return; }
+    char tmp[10]{};
+    int n = 0;
+    while (val > 0) { tmp[n++] = '0' + val % 10; val /= 10; }
+    for (int j = n - 1; j >= 0; j--) push(tmp[j]);
+  }
+};
+
+// Build the printf format string: %[flags][width][.precision][length]type
+template <format_spec Spec, char EffType, bool Is64>
+consteval printf_fmt_buf build_printf_fmt() {
+  static_assert(is_type_char(EffType) || EffType == 'u',
+                "build_printf_fmt: EffType must be a valid format type character");
+  printf_fmt_buf buf;
+  buf.push('%');
+
+  // Flags
+  if (Spec.align == '<') buf.push('-');
+  if (Spec.sign == '+') buf.push('+');
+  else if (Spec.sign == ' ') buf.push(' ');
+  if (Spec.alt) buf.push('#');
+  if (Spec.zero_pad && Spec.align != '<') buf.push('0');
+
+  // Width
+  if (Spec.width > 0) buf.push_int(Spec.width);
+
+  // Precision
+  if (Spec.precision >= 0) {
+    buf.push('.');
+    buf.push_int(Spec.precision);
+  }
+
+  // Length modifier for 64-bit integers
+  bool is_int = (EffType == 'd' || EffType == 'u' ||
+                 EffType == 'x' || EffType == 'X' || EffType == 'o');
+  if (is_int && Is64) {
+    buf.push('l');
+    buf.push('l');
+  }
+
+  // Type
+  buf.push(EffType);
+  buf.data[buf.len] = '\0';
+  return buf;
+}
+
 // ============================================================
 // Atomic print — single ::sycl::ext::oneapi::experimental::printf call for the entire format
 // ============================================================
@@ -1292,6 +1290,7 @@ inline void print_combined_dispatch(Args... args) {
   emit_printf<combined>(cast_args,
       std::make_index_sequence<std::tuple_size_v<decltype(cast_args)>>{});
 }
+} // namespace specifiers_path
 #endif // !FMT_SYCL_ACPP
 
 #if FMT_SYCL_ACPP
@@ -1303,7 +1302,7 @@ inline void print_combined_dispatch(Args... args) {
 // work-item, no interleaving between format args.
 // ============================================================
 
-namespace buffer {
+namespace buffer_path {
 
 inline void write(fmt_buf& out, const char* s) {
   while (*s) out.push(*s++);
@@ -1681,7 +1680,7 @@ inline void format(fmt_buf& out, const std::tuple<Args...>& all_args) {
     format<Fmt, info.close + 1, next_auto>(out, all_args);
   }
 }
-} // namespace buffer
+} // namespace buffer_path
 #endif // FMT_SYCL_ACPP
 
 } // namespace print_detail
@@ -1695,7 +1694,7 @@ inline void print(Args... args) {
 #if FMT_SYCL_ACPP
   // Accumulate everything into one buffer, then one sycl::detail::print call.
   print_detail::fmt_buf out;
-  print_detail::buffer::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
+  print_detail::buffer_path::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
   // sycl::detail::print wraps printf internally, so a literal % in out.data
   // would be misinterpreted as a format specifier.  Escape % → %% first.
   char escaped[512];
@@ -1713,15 +1712,15 @@ inline void print(Args... args) {
     constexpr size_t out_sz = print_detail::literal_out_size<Fmt, 0, end>();
     if constexpr (out_sz > 0) {
       constexpr auto lit = print_detail::make_literal<Fmt, 0, end>();
-      print_detail::emit_literal<lit>();
+      print_detail::specifiers_path::emit_literal<lit>();
     }
   } else {
-    static_assert(print_detail::all_printf_compatible<Fmt, 0, 0, Args...>(),
+    static_assert(print_detail::specifiers_path::all_printf_compatible<Fmt, 0, 0, Args...>(),
         "This format string uses features not supported on DPC++ "
         "({:b}, {:a}, {:^}, custom fill, {:#x} with signed int, "
         "dynamic width/precision, dragonbox default float). "
         "These features are only available on ACPP.");
-    print_detail::print_combined_dispatch<Fmt>(args...);
+    print_detail::specifiers_path::print_combined_dispatch<Fmt>(args...);
   }
 #endif
 }
