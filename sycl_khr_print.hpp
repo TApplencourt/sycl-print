@@ -1178,14 +1178,6 @@ template <format_spec Spec, char EffType, bool Is64> consteval printf_fmt_buf bu
 // Check at compile time if a placeholder + arg type can use a standard
 // printf specifier (i.e. does NOT need the buffer/dragonbox path).
 template <typename U, format_spec Spec> consteval bool is_printf_compatible() {
-  // Bool default/s → %s with "true"/"false" literal — printf-compatible
-  // (string literals live in constant memory, safe for SYCL printf)
-  // With UNFORCE_ATOMICITY: default float uses dragonbox (not printf-compatible)
-#ifdef FMT_SYCL_BUFFER_PATH_ONLY
-  if constexpr (std::floating_point<U> && Spec.type == '\0')
-    return false;
-#endif
-
   constexpr char etype = effective_type<U, Spec.type>();
   // Binary, hex-float, center, custom fill, signed hex/oct, alt hex
   if (etype == 'b' || etype == 'B')
