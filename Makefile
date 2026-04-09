@@ -69,7 +69,7 @@ test: test-examples test-fuzz test-ffast
 test-examples: $(EXAMPLES_STD) $(EXAMPLES_SYCL)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
-	  echo "--- serial -$$opt ---"; \
+	  echo "--- test -$$opt ---"; \
 	  diff <(./serial_std_$$opt) <(./serial_sycl_$$opt 2>/dev/null) \
 	    && echo "  PASS" \
 	    || { echo "  FAIL"; fail=1; }; \
