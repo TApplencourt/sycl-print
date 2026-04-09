@@ -1,16 +1,23 @@
 SHELL    := /bin/bash
-CXX      := icpx
 CXXFLAGS := -std=c++20 -Wall -Werror
-SYCLFLAGS := -fsycl
 
-OPT_LEVELS := O0 O1 O2 O3
+ifdef USE_ACPP
+  export PATH := $(HOME)/projet/p26.02/install/bin:$(PATH)
+  CXX             := acpp
+  SYCLFLAGS       := --acpp-targets=generic
+  OPT_LEVELS      := O2
+  RELAX_ATOMICITY :=
+else
+  CXX             := icpx
+  SYCLFLAGS       := -fsycl
+  OPT_LEVELS      := O0 O1 O2 O3
+  # Allow non-atomic format features (dragonbox {}, {:b}, {:a}, {:^}, etc.)
+  # Without this, only atomic + std::format-compatible features are allowed.
+  RELAX_ATOMICITY := -DFMT_SYCL_RELAX_ATOMICITY
+endif
 
 # -DWA at O0: work around DPC++ bug (string literal through pointer segfaults)
 WA_O0 := -DFMT_SYCL_WA_STR
-
-# Allow non-atomic format features (dragonbox {}, {:b}, {:a}, {:^}, etc.)
-# Without this, only atomic + std::format-compatible features are allowed.
-RELAX_ATOMICITY := -DFMT_SYCL_RELAX_ATOMICITY
 
 # Derived binary names
 EXAMPLES_STD  := $(addprefix examples_std_,$(OPT_LEVELS))
@@ -18,9 +25,6 @@ EXAMPLES_SYCL := $(addprefix examples_sycl_,$(OPT_LEVELS))
 FUZZ_STD      := $(addprefix fuzz_std_,$(OPT_LEVELS))
 FUZZ_SYCL     := $(addprefix fuzz_sycl_,$(OPT_LEVELS))
 FUZZ_SYCL_FM  := $(addprefix fuzz_sycl_ffast_,$(OPT_LEVELS))
-
-ACPP     := $(HOME)/projet/p26.02/install/bin/acpp
-ACPPFLAGS := --acpp-targets=generic -std=c++20 -O2
 
 ALL_BINS := $(EXAMPLES_STD) $(EXAMPLES_SYCL) $(FUZZ_STD) $(FUZZ_SYCL) $(FUZZ_SYCL_FM) \
             interleave_std interleave_sycl
@@ -55,16 +59,12 @@ interleave_std: test_interleave.cpp
 interleave_sycl: test_interleave.cpp sycl_khr_print.hpp
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@
 
-# README examples — compile with both DPC++ and ACPP to catch regressions
-example_readme%_dpcpp: example_readme%.cpp sycl_khr_print.hpp
+# README examples
+example_readme%: example_readme%.cpp sycl_khr_print.hpp
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@
 
-example_readme%_acpp: example_readme%.cpp sycl_khr_print.hpp
-	$(ACPP) $(ACPPFLAGS) $< -o $@
-
-readme-examples: example_readme1_dpcpp example_readme2_dpcpp \
-                 example_readme1_acpp  example_readme2_acpp
-	@echo "README examples compiled OK (DPC++ and ACPP)."
+readme-examples: example_readme1 example_readme2
+	@echo "README examples compiled OK."
 
 # ── Test targets ─────────────────────────────────────────────
 

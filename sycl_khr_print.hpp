@@ -1931,8 +1931,18 @@ inline void acpp_fmt_sci(fmt_buf& out, double val, int prec, bool upper, bool al
     exp = 0;
   } else {
     double tmp = val;
-    if (tmp >= 10.0)      { while (tmp >= 10.0)  { tmp /= 10.0; exp++; } val = tmp; }
-    else if (tmp < 1.0)   { while (tmp < 1.0)    { tmp *= 10.0; exp--; } val = tmp; }
+    if (tmp >= 10.0)    { while (tmp >= 10.0) { tmp /= 10.0; exp++; } val = tmp; }
+    else if (tmp < 1.0) { while (tmp < 1.0)   { tmp *= 10.0; exp--; } val = tmp; }
+    // If rounding would make the mantissa overflow to 10 (e.g. 9.999... rounds
+    // to 10.00000), detect it by pre-formatting and adjust before the real emit.
+    {
+      fmt_buf check;
+      acpp_fmt_fixed(check, val, prec, false);
+      if (check.len >= 2 && check.data[0] == '1' && check.data[1] == '0') {
+        val /= 10.0;
+        exp++;
+      }
+    }
   }
   acpp_fmt_fixed(out, val, prec, alt);
   out.push(upper ? 'E' : 'e');
@@ -1940,6 +1950,47 @@ inline void acpp_fmt_sci(fmt_buf& out, double val, int prec, bool upper, bool al
   if (exp < 0) exp = -exp;
   if (exp < 10) out.push('0');  // at least 2 exponent digits
   acpp_write_decimal(out, static_cast<unsigned>(exp));
+}
+
+// Remove trailing zeros (and decimal point) from the fractional part of buf,
+// stopping at 'e'/'E' if present (scientific notation).
+inline void acpp_trim_trailing_zeros(fmt_buf& buf) {
+  int dot_pos = -1;
+  int e_pos = buf.len;
+  for (int i = 0; i < buf.len; i++) {
+    if (buf.data[i] == '.') dot_pos = i;
+    else if (buf.data[i] == 'e' || buf.data[i] == 'E') { e_pos = i; break; }
+  }
+  if (dot_pos < 0) return;
+  int trim = e_pos;
+  while (trim > dot_pos + 1 && buf.data[trim - 1] == '0') trim--;
+  if (trim == dot_pos + 1) trim = dot_pos; // remove dot itself
+  int new_len = trim;
+  for (int i = e_pos; i < buf.len; i++) buf.data[new_len++] = buf.data[i];
+  buf.len = new_len;
+  buf.data[new_len] = '\0';
+}
+
+// Format g/G: shortest of fixed/scientific, remove trailing zeros unless alt.
+// prec = significant digits (default 6, min 1).
+inline void acpp_fmt_g(fmt_buf& out, double val, int prec, bool upper, bool alt) {
+  if (prec == 0) prec = 1;
+  int exp = 0;
+  if (val != 0.0) {
+    double tmp = val;
+    if (tmp >= 10.0)    { while (tmp >= 10.0) { tmp /= 10.0; exp++; } }
+    else if (tmp < 1.0) { while (tmp < 1.0)   { tmp *= 10.0; exp--; } }
+  }
+  fmt_buf tmp_buf;
+  if (exp >= -4 && exp < prec) {
+    int f_prec = prec - (exp + 1);
+    if (f_prec < 0) f_prec = 0;
+    acpp_fmt_fixed(tmp_buf, val, f_prec, alt);
+  } else {
+    acpp_fmt_sci(tmp_buf, val, prec - 1, upper, alt);
+  }
+  if (!alt) acpp_trim_trailing_zeros(tmp_buf);
+  acpp_append_buf(out, tmp_buf);
 }
 
 // Format a float/double argument with full spec (width, prec, sign, fill, zero-pad).
@@ -1967,8 +2018,10 @@ inline void acpp_write_float(fmt_buf& out, T arg, int dyn_w = Spec.width,
     acpp_fmt_fixed(digits, val, prec, Spec.alt);
   } else if (EffType == 'e' || EffType == 'E') {
     acpp_fmt_sci(digits, val, prec, upper, Spec.alt);
+  } else if (EffType == 'g' || EffType == 'G') {
+    acpp_fmt_g(digits, val, prec, upper, Spec.alt);
   } else {
-    // g/G/a/A — TODO Level 4+
+    // a/A — not yet implemented
     acpp_write(digits, "<?f>");
   }
 
