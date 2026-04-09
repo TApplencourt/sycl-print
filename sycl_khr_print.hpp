@@ -1819,12 +1819,232 @@ inline void acpp_write_literal(fmt_buf& out) {
   }
 }
 
+// Append fmt_buf src into accumulator out.
+inline void acpp_append_buf(fmt_buf& out, const fmt_buf& src) {
+  for (int i = 0; i < src.len; i++) out.push(src.data[i]);
+}
+
+// Apply fill+alignment around content and append to out.
+inline void acpp_apply_padding(fmt_buf& out, const fmt_buf& content,
+                               char fill, char align, int width) {
+  int pad = width > content.len ? width - content.len : 0;
+  if (pad == 0) {
+    acpp_append_buf(out, content);
+  } else if (align == '<') {
+    acpp_append_buf(out, content);
+    for (int i = 0; i < pad; i++) out.push(fill);
+  } else if (align == '^') {
+    for (int i = 0; i < pad / 2; i++) out.push(fill);
+    acpp_append_buf(out, content);
+    for (int i = pad / 2; i < pad; i++) out.push(fill);
+  } else { // '>' (default)
+    for (int i = 0; i < pad; i++) out.push(fill);
+    acpp_append_buf(out, content);
+  }
+}
+
+// Format a single integer argument with full spec support into out.
+// Mirrors format_int_buf but targets the accumulator directly.
+template <format_spec Spec, char EffType, typename T>
+inline void acpp_write_int(fmt_buf& out, T arg, int width = Spec.width) {
+  static_assert(is_int_format(EffType));
+  using U = std::decay_t<T>;
+  using Uns = std::conditional_t<(sizeof(U) <= 4), unsigned, unsigned long long>;
+  constexpr int base = (EffType == 'b' || EffType == 'B') ? 2
+                     : (EffType == 'o')                    ? 8
+                     : (EffType == 'x' || EffType == 'X')  ? 16
+                                                           : 10;
+  constexpr bool upper = (EffType == 'X' || EffType == 'B');
+
+  bool neg = false;
+  Uns uval;
+  if constexpr (std::same_as<U, bool>) {
+    uval = static_cast<Uns>(arg);
+  } else if constexpr (std::signed_integral<U>) {
+    if (arg < 0) { neg = true; uval = Uns(0) - static_cast<Uns>(arg); }
+    else uval = static_cast<Uns>(arg);
+  } else {
+    uval = static_cast<Uns>(arg);
+  }
+
+  char sc = neg ? '-' : (Spec.sign == '+') ? '+' : (Spec.sign == ' ') ? ' ' : '\0';
+
+  char pfx[3] = {};
+  int pfx_n = 0;
+  if constexpr (Spec.alt) {
+    if constexpr (base == 2)  { pfx[0] = '0'; pfx[1] = upper ? 'B' : 'b'; pfx_n = 2; }
+    else if constexpr (base == 16) { pfx[0] = '0'; pfx[1] = upper ? 'X' : 'x'; pfx_n = 2; }
+    else if constexpr (base == 8)  { if (uval != 0) { pfx[0] = '0'; pfx_n = 1; } }
+  }
+
+  fmt_buf digits;
+  uint_to_buf<base, upper>(digits, uval);
+
+  int content_w = (sc ? 1 : 0) + pfx_n + digits.len;
+  bool zpad = Spec.zero_pad && !Spec.fill && !Spec.align;
+
+  fmt_buf content;
+  if (sc) content.push(sc);
+  for (int i = 0; i < pfx_n; i++) content.push(pfx[i]);
+  if (zpad && width > content_w) content.push_n('0', width - content_w);
+  for (int i = 0; i < digits.len; i++) content.push(digits.data[i]);
+
+  acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), width);
+}
+
+// ── Float formatting helpers ──────────────────────────────────────────────────
+
+// Format a non-negative finite double in fixed notation into buf.
+// Handles up to prec=15 safely (uint64_t scale limit ~1e15 for val<1e4).
+inline void acpp_fmt_fixed(fmt_buf& out, double val, int prec, bool alt = false) {
+  // Compute scale = 10^prec
+  double scale = 1.0;
+  for (int i = 0; i < prec; i++) scale *= 10.0;
+
+  // Round: add 0.5 then split
+  double shifted = val * scale + 0.5;
+  auto iscale = static_cast<uint64_t>(scale);
+  auto total  = static_cast<uint64_t>(shifted);
+  uint64_t ipart = total / iscale;
+  uint64_t frac  = total % iscale;
+
+  acpp_write_decimal(out, ipart);
+
+  if (prec > 0 || alt) {
+    out.push('.');
+    if (prec > 0) {
+      // Write fractional digits with leading zeros
+      char fbuf[20]{};
+      for (int i = prec - 1; i >= 0; i--) {
+        fbuf[i] = '0' + static_cast<char>(frac % 10);
+        frac /= 10;
+      }
+      for (int i = 0; i < prec; i++) out.push(fbuf[i]);
+    }
+  }
+}
+
+// Format a non-negative finite double in scientific notation into buf.
+inline void acpp_fmt_sci(fmt_buf& out, double val, int prec, bool upper, bool alt = false) {
+  int exp = 0;
+  if (val == 0.0) {
+    exp = 0;
+  } else {
+    double tmp = val;
+    if (tmp >= 10.0)      { while (tmp >= 10.0)  { tmp /= 10.0; exp++; } val = tmp; }
+    else if (tmp < 1.0)   { while (tmp < 1.0)    { tmp *= 10.0; exp--; } val = tmp; }
+  }
+  acpp_fmt_fixed(out, val, prec, alt);
+  out.push(upper ? 'E' : 'e');
+  out.push(exp >= 0 ? '+' : '-');
+  if (exp < 0) exp = -exp;
+  if (exp < 10) out.push('0');  // at least 2 exponent digits
+  acpp_write_decimal(out, static_cast<unsigned>(exp));
+}
+
+// Format a float/double argument with full spec (width, prec, sign, fill, zero-pad).
+template <format_spec Spec, char EffType, typename T>
+inline void acpp_write_float(fmt_buf& out, T arg, int dyn_w = Spec.width,
+                             int dyn_p = Spec.precision) {
+  constexpr bool upper = (EffType == 'F' || EffType == 'E' || EffType == 'G');
+  double val = static_cast<double>(arg);
+  int prec = dyn_p >= 0 ? dyn_p : (Spec.precision >= 0 ? Spec.precision : 6);
+
+  // Extract sign from bits (handles -0.0)
+  uint64_t bits = __builtin_bit_cast(uint64_t, val);
+  bool neg = (bits >> 63) != 0;
+  if (neg) val = -val;
+  char sign_ch = neg ? '-' : (Spec.sign == '+') ? '+' : (Spec.sign == ' ') ? ' ' : '\0';
+
+  // Build the numeric part (without sign)
+  fmt_buf digits;
+  int biased_exp = static_cast<int>((bits >> 52) & 0x7FF);
+  if (biased_exp == 0x7FF) {                         // inf or nan
+    uint64_t mant = bits & 0x000FFFFFFFFFFFFFULL;
+    digits.push_str(mant == 0 ? (upper ? "INF" : "inf")
+                               : (upper ? "NAN" : "nan"));
+  } else if (EffType == 'f' || EffType == 'F') {
+    acpp_fmt_fixed(digits, val, prec, Spec.alt);
+  } else if (EffType == 'e' || EffType == 'E') {
+    acpp_fmt_sci(digits, val, prec, upper, Spec.alt);
+  } else {
+    // g/G/a/A — TODO Level 4+
+    acpp_write(digits, "<?f>");
+  }
+
+  // Assemble: sign + optional zero-fill + digits
+  int content_w = (sign_ch ? 1 : 0) + digits.len;
+  bool zpad = Spec.zero_pad && !Spec.fill && !Spec.align;
+
+  fmt_buf content;
+  if (sign_ch) content.push(sign_ch);
+  if (zpad && dyn_w > content_w) content.push_n('0', dyn_w - content_w);
+  acpp_append_buf(content, digits);
+
+  acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+}
+
+// ── Dispatch with spec ────────────────────────────────────────────────────────
+
+// Format one argument with an explicit format spec into out.
+template <format_spec Spec, bool Dynamic = false, typename T>
+inline void acpp_write_arg_with_spec(fmt_buf& out, T arg,
+                                     int dyn_w = Spec.width,
+                                     int dyn_p = Spec.precision) {
+  using U = std::decay_t<T>;
+
+  // bool default/s → "true"/"false" with padding
+  if constexpr (std::same_as<U, bool> && (Spec.type == '\0' || Spec.type == 's')) {
+    fmt_buf content;
+    push_bool(content, arg);
+    acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+    return;
+  }
+
+  constexpr char etype = effective_type<U, Spec.type>();
+
+  if constexpr (is_int_format(etype)) {
+    acpp_write_int<Spec, etype>(out, arg, dyn_w);
+  } else if constexpr (etype == 'c') {
+    fmt_buf content;
+    content.push(static_cast<char>(arg));
+    acpp_apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+  } else if constexpr (etype == 's') {
+    fmt_buf content;
+    content.push_str(printf_cast<'s'>(arg));
+    acpp_apply_padding(out, content, Spec.fill_or('<'), Spec.align_or('<'), dyn_w);
+  } else if constexpr (is_float_format(etype)) {
+    acpp_write_float<Spec, etype>(out, arg, dyn_w, dyn_p);
+  } else {
+    acpp_write(out, "<?>");
+  }
+}
+
 template <fixed_string Fmt, placeholder_info Info, size_t AutoIdx, typename... Args>
 inline void acpp_write_one_arg(fmt_buf& out, const std::tuple<Args...>& all_args) {
   constexpr size_t idx = Info.index >= 0 ? static_cast<size_t>(Info.index) : 0;
   auto arg = std::get<idx>(all_args);
-  // Specs: TODO Level 3 — for now fall back to default format
-  acpp_write_arg_default(out, arg);
+  if constexpr (Info.has_spec && Info.close > Info.spec_beg) {
+    constexpr int dyn_start = static_cast<int>(AutoIdx) + 1;
+    constexpr auto spec = parse_spec<Fmt, Info.spec_beg, Info.close, dyn_start>();
+    if constexpr (spec.width_arg >= 0 || spec.prec_arg >= 0) {
+      int dyn_w = spec.width;
+      int dyn_p = spec.precision;
+      if constexpr (spec.width_arg >= 0) {
+        constexpr size_t wi = static_cast<size_t>(spec.width_arg);
+        dyn_w = static_cast<int>(std::get<wi>(all_args));
+      }
+      if constexpr (spec.prec_arg >= 0) {
+        constexpr size_t pi = static_cast<size_t>(spec.prec_arg);
+        dyn_p = static_cast<int>(std::get<pi>(all_args));
+      }
+      acpp_write_arg_with_spec<spec, true>(out, arg, dyn_w, dyn_p);
+    } else {
+      acpp_write_arg_with_spec<spec>(out, arg);
+    }
+  } else {
+    acpp_write_arg_default(out, arg);
+  }
 }
 
 template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>

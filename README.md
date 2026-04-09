@@ -3,9 +3,11 @@
 - `std::print`-like formatting for SYCL device kernels.
 - Required C++20
 
-- Currently only tested with DPC++
+- Tested with DPC++ and AdaptiveCpp (ACPP, generic/SSCP backend)
 
 ## Quick example
+
+> Source: [`example_readme1.cpp`](example_readme1.cpp)
 
 ```cpp
 #include "sycl_khr_print.hpp"
@@ -29,6 +31,8 @@ work-item 3 says hello
 ```
 
 ## Advanced example
+
+> Source: [`example_readme2.cpp`](example_readme2.cpp)
 
 ```cpp
 #include "sycl_khr_print.hpp"
@@ -69,8 +73,7 @@ KHR_PRINTLN("format string", args...);
 - Otherwise, we support the majority of `std::print` features.
 
 - To ensure atomicity of the print:
-  - We disable `dragonbox` by default (use `FMT_SYCL_RELAX_ATOMICITY` to opt in). This means some floats may be formatted differently by `std::print` compared to `sycl::khr::print`.
-  - Some features are not implementable while keeping atomicity. If you use a non-atomic feature without the flag, you get a compile-time error with a workaround:
+  - On **DPC++**: we disable `dragonbox` by default (use `FMT_SYCL_RELAX_ATOMICITY` to opt in). This means some floats may be formatted differently by `std::print` compared to `sycl::khr::print`. Some features are not implementable while keeping atomicity. If you use a non-atomic feature without the flag, you get a compile-time error with a workaround:
 
 ```
 error: static assertion failed:
@@ -79,13 +82,20 @@ error: static assertion failed:
   Define FMT_SYCL_RELAX_ATOMICITY to enable
   (output may interleave across work-items).
 ```
+
+  - On **AdaptiveCpp (ACPP)**: the entire formatted string is accumulated into a fixed-size buffer before a single `sycl::detail::print` call, so atomicity is guaranteed without any flag. `FMT_SYCL_RELAX_ATOMICITY` is **not needed** (and has no effect) on ACPP.
+
+> **ACPP buffer limit**: the output buffer is 255 characters. Output longer than 255 characters per `KHR_PRINT` call is silently truncated.
 ## Build
 
 ```bash
-# Single file, just include the header
+# DPC++ (Intel)
 icpx -fsycl -std=c++20 my_kernel.cpp -o my_kernel
 
-# Enable non-atomic features (full std::format compatibility)
+# AdaptiveCpp (generic/SSCP backend — dragonbox always on, no flag needed)
+acpp --acpp-targets=generic -std=c++20 my_kernel.cpp -o my_kernel
+
+# Enable non-atomic features on DPC++ (full std::format compatibility)
 icpx -fsycl -std=c++20 -DFMT_SYCL_RELAX_ATOMICITY my_kernel.cpp -o my_kernel
 ```
 
