@@ -43,9 +43,11 @@ build/:
 define TEST_template
 $(foreach s,$(TEST_SRCS),$(eval \
 build/$(s)_$(1).o: $(TEST_DIR)/$(s).cpp $(TEST_HDRS) sycl_khr_print.hpp | build/; \
+	@TIMEFORMAT="  compile $(s)_$(1).o: %Rs"; time \
 	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) -$(1) $$(BUFFER_PATH) $$(WA_$(1)) -c $$< -o $$@))
 
 build/test_$(1): $(foreach s,$(TEST_SRCS),build/$(s)_$(1).o)
+	@TIMEFORMAT="  link test_$(1): %Rs"; time \
 	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) $$^ -o $$@
 endef
 
@@ -54,18 +56,24 @@ $(foreach o,$(OPT_LEVELS),$(eval $(call TEST_template,$(o))))
 # ── Fuzz targets (single binary per opt level) ──────────────
 
 build/fuzz_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+	@TIMEFORMAT="  compile fuzz_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(BUFFER_PATH) $(WA_$*) $< -o $@
 
 build/fuzz_ffast_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+	@TIMEFORMAT="  compile fuzz_ffast_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(BUFFER_PATH) $(WA_$*) $< -o $@
 
 # README examples
 build/example_readme%: example_readme%.cpp sycl_khr_print.hpp | build/
+	@TIMEFORMAT="  compile example_readme$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@
 
 readme-examples: build/example_readme1 build/example_readme2
-	@./build/example_readme1 >/dev/null && ./build/example_readme2 >/dev/null \
-	  && echo "readme-examples: PASS" || { echo "readme-examples: FAIL"; false; }
+	@t0=$$(date +%s%N); \
+	./build/example_readme1 >/dev/null && ./build/example_readme2 >/dev/null; rc=$$?; \
+	ms=$$(( ($$(date +%s%N) - t0) / 1000000 )); \
+	if [ $$rc -eq 0 ]; then echo "readme-examples: PASS ($${ms}ms)"; \
+	else echo "readme-examples: FAIL ($${ms}ms)"; false; fi
 
 # ── Test targets ─────────────────────────────────────────────
 
@@ -79,27 +87,33 @@ test: test-format test-fuzz test-ffast readme-examples
 test-format: $(TEST_BINS)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
-	  ./build/test_$$opt \
-	    && echo "test -$$opt: PASS" \
-	    || { echo "test -$$opt: FAIL"; fail=1; }; \
+	  t0=$$(date +%s%N); \
+	  ./build/test_$$opt; rc=$$?; \
+	  ms=$$(( ($$(date +%s%N) - t0) / 1000000 )); \
+	  if [ $$rc -eq 0 ]; then echo "test -$$opt: PASS ($${ms}ms)"; \
+	  else echo "test -$$opt: FAIL ($${ms}ms)"; fail=1; fi; \
 	done; \
 	exit $$fail
 
 test-fuzz: $(FUZZ_BINS)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
-	  ./build/fuzz_$$opt \
-	    && echo "fuzz -$$opt: PASS" \
-	    || { echo "fuzz -$$opt: FAIL"; fail=1; }; \
+	  t0=$$(date +%s%N); \
+	  ./build/fuzz_$$opt; rc=$$?; \
+	  ms=$$(( ($$(date +%s%N) - t0) / 1000000 )); \
+	  if [ $$rc -eq 0 ]; then echo "fuzz -$$opt: PASS ($${ms}ms)"; \
+	  else echo "fuzz -$$opt: FAIL ($${ms}ms)"; fail=1; fi; \
 	done; \
 	exit $$fail
 
 test-ffast: $(FUZZ_FM)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
-	  ./build/fuzz_ffast_$$opt \
-	    && echo "fuzz -ffast-math -$$opt: PASS" \
-	    || { echo "fuzz -ffast-math -$$opt: FAIL"; fail=1; }; \
+	  t0=$$(date +%s%N); \
+	  ./build/fuzz_ffast_$$opt; rc=$$?; \
+	  ms=$$(( ($$(date +%s%N) - t0) / 1000000 )); \
+	  if [ $$rc -eq 0 ]; then echo "fuzz -ffast-math -$$opt: PASS ($${ms}ms)"; \
+	  else echo "fuzz -ffast-math -$$opt: FAIL ($${ms}ms)"; fail=1; fi; \
 	done; \
 	exit $$fail
 
