@@ -17,58 +17,78 @@ endif
 # -DWA at O0: work around DPC++ bug (string literal through pointer segfaults)
 WA_O0 := -DFMT_SYCL_WA_STR
 
-# Derived binary names
-TEST_STD      := $(addprefix test_std_,$(OPT_LEVELS))
-TEST_SYCL     := $(addprefix test_sycl_,$(OPT_LEVELS))
-FUZZ_STD      := $(addprefix fuzz_std_,$(OPT_LEVELS))
-FUZZ_SYCL     := $(addprefix fuzz_sycl_,$(OPT_LEVELS))
-FUZZ_SYCL_FM  := $(addprefix fuzz_sycl_ffast_,$(OPT_LEVELS))
+# ── Source files ────────────────────────────────────────────
+TEST_DIR    := test
+TEST_SRCS   := test_main test_integers test_floats test_strings test_layout test_misc
+TEST_HDRS   := $(wildcard $(TEST_DIR)/*.hpp $(TEST_DIR)/*.inc)
 
-ALL_BINS := $(TEST_STD) $(TEST_SYCL) $(FUZZ_STD) $(FUZZ_SYCL) $(FUZZ_SYCL_FM)
+# Derived binary names (all in build/)
+TEST_BINS     := $(addprefix build/test_,$(OPT_LEVELS))
+FUZZ_STD      := build/fuzz_std $(if $(WA_O0),build/fuzz_std_wa)
+FUZZ_SYCL     := $(addprefix build/fuzz_sycl_,$(OPT_LEVELS))
+FUZZ_SYCL_FM  := $(addprefix build/fuzz_sycl_ffast_,$(OPT_LEVELS))
+
+ALL_BINS := $(TEST_BINS) $(FUZZ_STD) $(FUZZ_SYCL) $(FUZZ_SYCL_FM)
 
 .PHONY: all build test test-format test-fuzz test-ffast \
         readme-examples clean
 
 all: test
 
-# ── Build rules ──────────────────────────────────────────────
+# ── Build directory ─────────────────────────────────────────
 
-build: $(ALL_BINS)
+build/:
+	mkdir -p build
 
-test_std_%: tests.cpp
-	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(BUFFER_PATH) $(WA_$*) $< -o $@
+# ── Test binaries (single binary per opt level) ─────────────
 
-test_sycl_%: tests.cpp sycl_khr_print.hpp
+define TEST_template
+$(foreach s,$(TEST_SRCS),$(eval \
+build/$(s)_$(1).o: $(TEST_DIR)/$(s).cpp $(TEST_HDRS) sycl_khr_print.hpp | build/; \
+	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) -$(1) $$(BUFFER_PATH) $$(WA_$(1)) -c $$< -o $$@))
+
+build/test_$(1): $(foreach s,$(TEST_SRCS),build/$(s)_$(1).o)
+	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) $$^ -o $$@
+endef
+
+$(foreach o,$(OPT_LEVELS),$(eval $(call TEST_template,$(o))))
+
+# ── Fuzz targets (single-file, dual-binary) ─────────────────
+
+build/fuzz_std: $(TEST_DIR)/fuzz.cpp sycl_khr_print.hpp | build/
+	$(CXX) $(CXXFLAGS) -O2 -DUSE_STD $(BUFFER_PATH) $< -o $@
+
+build/fuzz_std_wa: $(TEST_DIR)/fuzz.cpp sycl_khr_print.hpp | build/
+	$(CXX) $(CXXFLAGS) -O2 -DUSE_STD $(BUFFER_PATH) -DFMT_SYCL_WA_STR $< -o $@
+
+build/fuzz_sycl_%: $(TEST_DIR)/fuzz.cpp sycl_khr_print.hpp | build/
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(BUFFER_PATH) $(WA_$*) $< -o $@
 
-fuzz_std_%: fuzz.cpp
-	$(CXX) $(CXXFLAGS) -$* -DUSE_STD $(BUFFER_PATH) $(WA_$*) $< -o $@
-
-fuzz_sycl_%: fuzz.cpp sycl_khr_print.hpp
-	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(BUFFER_PATH) $(WA_$*) $< -o $@
-
-fuzz_sycl_ffast_%: fuzz.cpp sycl_khr_print.hpp
+build/fuzz_sycl_ffast_%: $(TEST_DIR)/fuzz.cpp sycl_khr_print.hpp | build/
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(BUFFER_PATH) $(WA_$*) $< -o $@
 
 # README examples
-example_readme%: example_readme%.cpp sycl_khr_print.hpp
+build/example_readme%: example_readme%.cpp sycl_khr_print.hpp | build/
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@
 
-readme-examples: example_readme1 example_readme2
-	@echo "README examples compiled OK."
+readme-examples: build/example_readme1 build/example_readme2
+	@echo "--- readme examples ---"
+	@./build/example_readme1 && ./build/example_readme2 && echo "  PASS"
 
 # ── Test targets ─────────────────────────────────────────────
 
-test: test-format test-fuzz test-ffast
+build: $(ALL_BINS)
+
+test: test-format test-fuzz test-ffast readme-examples
 	@echo "==============================="
 	@echo "All tests passed."
 	@echo "==============================="
 
-test-format: $(TEST_STD) $(TEST_SYCL)
+test-format: $(TEST_BINS)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
 	  echo "--- test -$$opt ---"; \
-	  diff <(./test_std_$$opt) <(./test_sycl_$$opt 2>/dev/null) \
+	  ./build/test_$$opt \
 	    && echo "  PASS" \
 	    || { echo "  FAIL"; fail=1; }; \
 	done; \
@@ -78,7 +98,8 @@ test-fuzz: $(FUZZ_STD) $(FUZZ_SYCL)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
 	  echo "--- fuzz -$$opt ---"; \
-	  diff <(./fuzz_std_$$opt) <(./fuzz_sycl_$$opt 2>/dev/null) \
+	  ref=./build/fuzz_std; [ "$$opt" = "O0" ] && [ -f ./build/fuzz_std_wa ] && ref=./build/fuzz_std_wa; \
+	  diff <($$ref) <(./build/fuzz_sycl_$$opt 2>/dev/null) \
 	    && echo "  PASS" \
 	    || { echo "  FAIL"; fail=1; }; \
 	done; \
@@ -88,11 +109,12 @@ test-ffast: $(FUZZ_STD) $(FUZZ_SYCL_FM)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
 	  echo "--- fuzz -ffast-math -$$opt ---"; \
-	  diff <(./fuzz_std_$$opt) <(./fuzz_sycl_ffast_$$opt 2>/dev/null) \
+	  ref=./build/fuzz_std; [ "$$opt" = "O0" ] && [ -f ./build/fuzz_std_wa ] && ref=./build/fuzz_std_wa; \
+	  diff <($$ref) <(./build/fuzz_sycl_ffast_$$opt 2>/dev/null) \
 	    && echo "  PASS" \
 	    || { echo "  FAIL"; fail=1; }; \
 	done; \
 	exit $$fail
 
 clean:
-	rm -f $(ALL_BINS) repro_O0 repro_O1
+	rm -rf build/
