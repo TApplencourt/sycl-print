@@ -12,10 +12,9 @@ else
   SYCLFLAGS       := -fsycl
   OPT_LEVELS      := O0 O1 O2 O3
   BUFFER_PATH     :=
+  # Work around DPC++ bug (string literal through pointer segfaults at O0)
+  WA_O0           := -DFMT_SYCL_WA_STR
 endif
-
-# -DWA at O0: work around DPC++ bug (string literal through pointer segfaults)
-WA_O0 := -DFMT_SYCL_WA_STR
 
 # ── Source files ────────────────────────────────────────────
 TEST_DIR    := test
