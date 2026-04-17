@@ -23,12 +23,11 @@ TEST_SRCS   := test_main test_integers test_floats test_strings test_layout test
 TEST_HDRS   := $(wildcard $(TEST_DIR)/*.hpp $(TEST_DIR)/*.inc)
 
 # Derived binary names (all in build/)
-TEST_BINS     := $(addprefix build/test_,$(OPT_LEVELS))
-FUZZ_STD      := build/fuzz_std $(if $(WA_O0),build/fuzz_std_wa)
-FUZZ_SYCL     := $(addprefix build/fuzz_sycl_,$(OPT_LEVELS))
-FUZZ_SYCL_FM  := $(addprefix build/fuzz_sycl_ffast_,$(OPT_LEVELS))
+TEST_BINS := $(addprefix build/test_,$(OPT_LEVELS))
+FUZZ_BINS := $(addprefix build/fuzz_,$(OPT_LEVELS))
+FUZZ_FM   := $(addprefix build/fuzz_ffast_,$(OPT_LEVELS))
 
-ALL_BINS := $(TEST_BINS) $(FUZZ_STD) $(FUZZ_SYCL) $(FUZZ_SYCL_FM)
+ALL_BINS := $(TEST_BINS) $(FUZZ_BINS) $(FUZZ_FM)
 
 .PHONY: all build test test-format test-fuzz test-ffast \
         readme-examples clean
@@ -53,18 +52,12 @@ endef
 
 $(foreach o,$(OPT_LEVELS),$(eval $(call TEST_template,$(o))))
 
-# ── Fuzz targets (single-file, dual-binary) ─────────────────
+# ── Fuzz targets (single binary per opt level) ──────────────
 
-build/fuzz_std: $(TEST_DIR)/fuzz.cpp sycl_khr_print.hpp | build/
-	$(CXX) $(CXXFLAGS) -O2 -DUSE_STD $(BUFFER_PATH) $< -o $@
-
-build/fuzz_std_wa: $(TEST_DIR)/fuzz.cpp sycl_khr_print.hpp | build/
-	$(CXX) $(CXXFLAGS) -O2 -DUSE_STD $(BUFFER_PATH) -DFMT_SYCL_WA_STR $< -o $@
-
-build/fuzz_sycl_%: $(TEST_DIR)/fuzz.cpp sycl_khr_print.hpp | build/
+build/fuzz_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(BUFFER_PATH) $(WA_$*) $< -o $@
 
-build/fuzz_sycl_ffast_%: $(TEST_DIR)/fuzz.cpp sycl_khr_print.hpp | build/
+build/fuzz_ffast_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(BUFFER_PATH) $(WA_$*) $< -o $@
 
 # README examples
@@ -72,8 +65,8 @@ build/example_readme%: example_readme%.cpp sycl_khr_print.hpp | build/
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@
 
 readme-examples: build/example_readme1 build/example_readme2
-	@echo "--- readme examples ---"
-	@./build/example_readme1 && ./build/example_readme2 && echo "  PASS"
+	@./build/example_readme1 >/dev/null && ./build/example_readme2 >/dev/null \
+	  && echo "readme-examples: PASS" || { echo "readme-examples: FAIL"; false; }
 
 # ── Test targets ─────────────────────────────────────────────
 
@@ -87,32 +80,27 @@ test: test-format test-fuzz test-ffast readme-examples
 test-format: $(TEST_BINS)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
-	  echo "--- test -$$opt ---"; \
 	  ./build/test_$$opt \
-	    && echo "  PASS" \
-	    || { echo "  FAIL"; fail=1; }; \
+	    && echo "test -$$opt: PASS" \
+	    || { echo "test -$$opt: FAIL"; fail=1; }; \
 	done; \
 	exit $$fail
 
-test-fuzz: $(FUZZ_STD) $(FUZZ_SYCL)
+test-fuzz: $(FUZZ_BINS)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
-	  echo "--- fuzz -$$opt ---"; \
-	  ref=./build/fuzz_std; [ "$$opt" = "O0" ] && [ -f ./build/fuzz_std_wa ] && ref=./build/fuzz_std_wa; \
-	  diff <($$ref) <(./build/fuzz_sycl_$$opt 2>/dev/null) \
-	    && echo "  PASS" \
-	    || { echo "  FAIL"; fail=1; }; \
+	  ./build/fuzz_$$opt \
+	    && echo "fuzz -$$opt: PASS" \
+	    || { echo "fuzz -$$opt: FAIL"; fail=1; }; \
 	done; \
 	exit $$fail
 
-test-ffast: $(FUZZ_STD) $(FUZZ_SYCL_FM)
+test-ffast: $(FUZZ_FM)
 	@fail=0; \
 	for opt in $(OPT_LEVELS); do \
-	  echo "--- fuzz -ffast-math -$$opt ---"; \
-	  ref=./build/fuzz_std; [ "$$opt" = "O0" ] && [ -f ./build/fuzz_std_wa ] && ref=./build/fuzz_std_wa; \
-	  diff <($$ref) <(./build/fuzz_sycl_ffast_$$opt 2>/dev/null) \
-	    && echo "  PASS" \
-	    || { echo "  FAIL"; fail=1; }; \
+	  ./build/fuzz_ffast_$$opt \
+	    && echo "fuzz -ffast-math -$$opt: PASS" \
+	    || { echo "fuzz -ffast-math -$$opt: FAIL"; fail=1; }; \
 	done; \
 	exit $$fail
 

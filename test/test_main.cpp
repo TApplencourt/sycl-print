@@ -16,6 +16,5 @@ int main() {
   ok &= test_layout(q);
   ok &= test_misc(q);
 
-  printf(ok ? "PASS\n" : "FAIL\n");
   return ok ? 0 : 1;
 }
