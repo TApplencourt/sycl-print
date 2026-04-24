@@ -967,26 +967,29 @@ inline void push_bool(fmt_buf &buf, bool val) {
     buf.push_str("false");
 }
 
+// Write an unsigned integer in any base directly into buf.data right-to-left
+// from buf.len. Uses the 32-byte fmt_buf pad — no temporary array needed.
+template <int Base, bool Upper = false, typename U>
+inline void write_uint_direct(fmt_buf &buf, U val) {
+  static_assert(Base == 2 || Base == 8 || Base == 10 || Base == 16);
+  if (val == 0) { buf.push('0'); return; }
+  int n = 0;
+  for (U t = val; t > 0; t /= U(Base)) n++;
+  int pos = buf.len + n - 1;
+  while (val > 0) {
+    int d = static_cast<int>(val % U(Base));
+    buf.data[pos--] = Upper ? "0123456789ABCDEF"[d] : "0123456789abcdef"[d];
+    val /= U(Base);
+  }
+  buf.len += n;
+  if (buf.len > fmt_buf::cap) buf.len = fmt_buf::cap;
+}
+
 // Format unsigned integer into buffer in given base
 template <int Base, bool Upper, typename U> inline void uint_to_buf(fmt_buf &buf, U val) {
   static_assert(Base == 2 || Base == 8 || Base == 10 || Base == 16,
                 "uint_to_buf: Base must be 2, 8, 10, or 16");
-  if (val == 0) {
-    buf.push('0');
-    return;
-  }
-  char tmp[65];
-  int n = 0;
-  while (val > 0) {
-    int d = static_cast<int>(val % Base);
-    if constexpr (Upper)
-      tmp[n++] = "0123456789ABCDEF"[d];
-    else
-      tmp[n++] = "0123456789abcdef"[d];
-    val /= Base;
-  }
-  for (int i = n - 1; i >= 0; i--)
-    buf.push(tmp[i]);
+  write_uint_direct<Base, Upper>(buf, val);
 }
 
 // Hex digit helper
@@ -1066,18 +1069,10 @@ inline void hex_float_to_buf(fmt_buf &content, T arg) {
     content.push('-');
     exponent = -exponent;
   }
-  if (exponent == 0) {
+  if (exponent == 0)
     content.push('0');
-  } else {
-    char tmp[10];
-    int n = 0;
-    while (exponent > 0) {
-      tmp[n++] = static_cast<char>('0' + exponent % 10);
-      exponent /= 10;
-    }
-    for (int i = n - 1; i >= 0; i--)
-      content.push(tmp[i]);
-  }
+  else
+    write_uint_direct<10>(content, static_cast<unsigned>(exponent));
 }
 
 // Cast an arg to its printf-compatible type.
@@ -1337,28 +1332,21 @@ inline void write(fmt_buf &out, const char *s) {
 
 template <typename T> inline void write_decimal(fmt_buf &out, T val) {
   using U = std::make_unsigned_t<T>;
-  bool neg = false;
   U uval;
   if constexpr (std::signed_integral<T>) {
-    neg = val < 0;
-    uval = neg ? U(0) - static_cast<U>(val) : static_cast<U>(val);
+    if (val < 0) {
+      out.push('-');
+      // Store in a typed variable: subtraction of two uint8_t/uint16_t promotes
+      // to int, so passing the expression directly would deduce U=int instead of
+      // the actual unsigned type, making t>0 false on a negative int.
+      uval = U(0) - static_cast<U>(val);
+    } else {
+      uval = static_cast<U>(val);
+    }
   } else {
     uval = static_cast<U>(val);
   }
-  // Count digits first so we know the final position and can write directly
-  // into out.data right-to-left. The 32-byte pad in fmt_buf ensures safety.
-  int nd = 1;
-  for (U t = uval; t >= 10; t /= 10) nd++;
-  int total = nd + (neg ? 1 : 0);
-  int pos = out.len + total - 1;
-  while (uval >= 10) {
-    out.data[pos--] = '0' + static_cast<char>(uval % 10);
-    uval /= 10;
-  }
-  out.data[pos--] = '0' + static_cast<char>(uval);
-  if (neg) out.data[pos] = '-';
-  out.len += total;
-  if (out.len > fmt_buf::cap) out.len = fmt_buf::cap;
+  write_uint_direct<10>(out, uval);
 }
 
 template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
@@ -1520,14 +1508,14 @@ inline void fmt_fixed(fmt_buf &out, double val, int prec, bool alt = false) {
   if (prec > 0 || alt) {
     out.push('.');
     if (prec > 0) {
-      // Write fractional digits with leading zeros
-      char fbuf[20]{};
-      for (int i = prec - 1; i >= 0; i--) {
-        fbuf[i] = '0' + static_cast<char>(frac % 10);
+      // prec is known, so advance len directly and write right-to-left.
+      int pos = out.len + prec - 1;
+      out.len += prec;
+      for (int i = 0; i < prec; i++) {
+        out.data[pos--] = '0' + static_cast<char>(frac % 10);
         frac /= 10;
       }
-      for (int i = 0; i < prec; i++)
-        out.push(fbuf[i]);
+      if (out.len > fmt_buf::cap) out.len = fmt_buf::cap;
     }
   }
 }
