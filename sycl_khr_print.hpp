@@ -805,14 +805,14 @@ struct format_spec {
   char fill = '\0';
   char align = '\0';
   char sign = '\0';
+  char type = '\0';
   bool alt = false;
   bool zero_pad = false;
-  int width = 0;
-  int precision = -1;
-  char type = '\0';
-  int width_arg = -1; // >=0: dynamic width from arg N, -1: static
-  int prec_arg = -1;  // >=0: dynamic precision from arg N, -1: static
-  int dyn_count = 0;  // number of auto-indexed dynamic args consumed
+  uint8_t width = 0;
+  int8_t precision = -1;
+  int8_t width_arg = -1; // >=0: dynamic width from arg N, -1: static
+  int8_t prec_arg = -1;  // >=0: dynamic precision from arg N, -1: static
+  uint8_t dyn_count = 0; // number of auto-indexed dynamic args consumed
 
   constexpr char fill_or(char def = ' ') const { return fill ? fill : def; }
   constexpr char align_or(char def = '>') const { return align ? align : def; }
@@ -1035,6 +1035,15 @@ template <typename U> constexpr char effective_type_rt(char spec_type) {
   }
 }
 
+template <typename T>
+consteval bool type_can_produce_pct() {
+  using U = std::decay_t<T>;
+  if constexpr (std::same_as<U, char>) return true;
+  else if constexpr (std::is_pointer_v<U>)
+    return std::same_as<std::remove_cv_t<std::remove_pointer_t<U>>, char>;
+  else return false;
+}
+
 // Pre-parsed placeholder entry — populated at compile time, consumed at runtime.
 struct ph_entry {
   uint8_t open;
@@ -1054,6 +1063,7 @@ struct print_string {
   int len;
   ph_entry phs[MAX_PH]{};
   int ph_count = 0;
+  bool needs_pct_escape = false;
 
   template <size_t N>
   consteval print_string(const char (&s)[N]) : len(static_cast<int>(N - 1)) {
@@ -1088,6 +1098,12 @@ struct print_string {
       }
       pos = static_cast<int>(info.close) + 1;
     }
+    needs_pct_escape = (type_can_produce_pct<Args>() || ...);
+    if (!needs_pct_escape) {
+      for (int i = 0; i < len; i++) {
+        if (str[i] == '%') { needs_pct_escape = true; break; }
+      }
+    }
   }
 };
 #endif // FMT_SYCL_ACPP
@@ -1105,6 +1121,24 @@ struct fmt_buf {
   // Extra 32 bytes let dragonbox write directly into data[len] without a
   // temporary buffer; len is clamped to cap afterwards.
   char data[cap + 32]{};
+  int len = 0;
+  void push(char c) {
+    if (len < cap)
+      data[len++] = c;
+  }
+  void push_n(char c, int n) {
+    for (int i = 0; i < n && len < cap; i++)
+      data[len++] = c;
+  }
+  void push_str(const char *s) {
+    while (*s)
+      push(*s++);
+  }
+};
+
+struct small_buf {
+  static constexpr int cap = 48;
+  char data[cap]{};
   int len = 0;
   void push(char c) {
     if (len < cap)
@@ -1144,13 +1178,13 @@ inline void write_uint_raw(char *data, int &len, int cap, U val) {
   if (len > cap) len = cap;
 }
 
-template <int Base, bool Upper = false, typename U>
-inline void write_uint_direct(fmt_buf &buf, U val) {
-  write_uint_raw<Base, Upper>(buf.data, buf.len, buf.cap + 32, val);
+template <int Base, bool Upper = false, typename U, typename Buf>
+inline void write_uint_direct(Buf &buf, U val) {
+  write_uint_raw<Base, Upper>(buf.data, buf.len, static_cast<int>(sizeof(buf.data)), val);
 }
 
 // Format unsigned integer into buffer in given base
-template <int Base, bool Upper, typename U> inline void uint_to_buf(fmt_buf &buf, U val) {
+template <int Base, bool Upper, typename U, typename Buf> inline void uint_to_buf(Buf &buf, U val) {
   static_assert(Base == 2 || Base == 8 || Base == 10 || Base == 16,
                 "uint_to_buf: Base must be 2, 8, 10, or 16");
   write_uint_direct<Base, Upper>(buf, val);
@@ -1418,7 +1452,7 @@ inline void write(fmt_buf &out, const char *s) {
     out.push(*s++);
 }
 
-template <typename T> inline void write_decimal(fmt_buf &out, T val) {
+template <typename T, typename Buf> inline void write_decimal(Buf &out, T val) {
   using U = std::make_unsigned_t<T>;
   U uval;
   if constexpr (std::signed_integral<T>) {
@@ -1518,7 +1552,8 @@ inline void apply_padding_data(fmt_buf &out, const char *data, int len,
 
 // Format a non-negative finite double in fixed notation into buf.
 // Handles up to prec=15 safely (uint64_t scale limit ~1e15 for val<1e4).
-inline void fmt_fixed(fmt_buf &out, double val, int prec, bool alt = false) {
+template <typename Buf>
+inline void fmt_fixed(Buf &out, double val, int prec, bool alt = false) {
   // Compute scale = 10^prec
   double scale = 1.0;
   for (int i = 0; i < prec; i++)
@@ -1543,13 +1578,14 @@ inline void fmt_fixed(fmt_buf &out, double val, int prec, bool alt = false) {
         out.data[pos--] = '0' + static_cast<char>(frac % 10);
         frac /= 10;
       }
-      if (out.len > fmt_buf::cap) out.len = fmt_buf::cap;
+      if (out.len > Buf::cap) out.len = Buf::cap;
     }
   }
 }
 
 // Format a non-negative finite double in scientific notation into buf.
-inline void fmt_sci(fmt_buf &out, double val, int prec, bool upper, bool alt = false) {
+template <typename Buf>
+inline void fmt_sci(Buf &out, double val, int prec, bool upper, bool alt = false) {
   int exp = 0;
   if (val == 0.0) {
     exp = 0;
@@ -1592,7 +1628,8 @@ inline void fmt_sci(fmt_buf &out, double val, int prec, bool upper, bool alt = f
 
 // Remove trailing zeros (and decimal point) from buf[start..len),
 // stopping at 'e'/'E' if present (scientific notation).
-inline void trim_trailing_zeros(fmt_buf &buf, int start = 0) {
+template <typename Buf>
+inline void trim_trailing_zeros(Buf &buf, int start = 0) {
   int dot_pos = -1;
   int e_pos = buf.len;
   for (int i = start; i < buf.len; i++) {
@@ -1619,7 +1656,8 @@ inline void trim_trailing_zeros(fmt_buf &buf, int start = 0) {
 
 // Format g/G: shortest of fixed/scientific, remove trailing zeros unless alt.
 // prec = significant digits (default 6, min 1).
-inline void fmt_g(fmt_buf &out, double val, int prec, bool upper, bool alt) {
+template <typename Buf>
+inline void fmt_g(Buf &out, double val, int prec, bool upper, bool alt) {
   if (prec == 0)
     prec = 1;
   int exp = 0;
@@ -1655,8 +1693,8 @@ inline void fmt_g(fmt_buf &out, double val, int prec, bool upper, bool alt) {
 // ============================================================
 
 // hex_float_to_buf with runtime spec
-template <typename T>
-inline void hex_float_to_buf_rt(fmt_buf &content, T arg, const format_spec &spec, bool upper) {
+template <typename T, typename Buf>
+inline void hex_float_to_buf_rt(Buf &content, T arg, const format_spec &spec, bool upper) {
   double val = static_cast<double>(arg);
   uint64_t bits = __builtin_bit_cast(uint64_t, val);
   bool negative = (bits >> 63) != 0;
@@ -1761,7 +1799,7 @@ template <typename T>
 inline void write_float_rt(fmt_buf &out, T arg, const format_spec &spec, char etype,
                            int dyn_w, int dyn_p) {
   if (etype == 'a' || etype == 'A') {
-    fmt_buf content;
+    small_buf content;
     hex_float_to_buf_rt(content, arg, spec, etype == 'A');
     apply_padding_data(out, content.data, content.len, spec.fill_or(), spec.align_or(), dyn_w);
     return;
@@ -1776,7 +1814,7 @@ inline void write_float_rt(fmt_buf &out, T arg, const format_spec &spec, char et
   if (neg) val = -val;
   char sign_ch = neg ? '-' : (spec.sign == '+') ? '+' : (spec.sign == ' ') ? ' ' : '\0';
 
-  fmt_buf digits;
+  small_buf digits;
   int biased_exp = static_cast<int>((bits >> 52) & 0x7FF);
   if (biased_exp == 0x7FF) {
     uint64_t mant = bits & 0x000FFFFFFFFFFFFFULL;
@@ -1913,22 +1951,24 @@ inline void format_rt(fmt_buf &out, const print_string<Args...> &ps,
 // cannot distinguish at runtime. We escape % → %% here, which is correct
 // for CUDA (vprintf renders %% as %). This breaks CPU SSCP (fputs prints
 // %% literally), but we favor GPU correctness.
-inline void flush_buf(fmt_buf &out) {
+inline void flush_buf(fmt_buf &out, bool escape_pct = true) {
   if (__acpp_sscp_is_host) {
     out.data[out.len] = '\0';
     fputs(out.data, stdout);
   } else {
-    int pct = 0;
-    for (int i = 0; i < out.len; i++)
-      if (out.data[i] == '%') pct++;
-    if (pct > 0) {
-      int newlen = out.len + pct;
-      if (newlen > (int)fmt_buf::cap) newlen = fmt_buf::cap;
-      for (int src = out.len - 1, dst = newlen - 1; src >= 0 && dst >= 0; src--) {
-        out.data[dst--] = out.data[src];
-        if (out.data[src] == '%' && dst >= 0) out.data[dst--] = '%';
+    if (escape_pct) {
+      int pct = 0;
+      for (int i = 0; i < out.len; i++)
+        if (out.data[i] == '%') pct++;
+      if (pct > 0) {
+        int newlen = out.len + pct;
+        if (newlen > (int)fmt_buf::cap) newlen = fmt_buf::cap;
+        for (int src = out.len - 1, dst = newlen - 1; src >= 0 && dst >= 0; src--) {
+          out.data[dst--] = out.data[src];
+          if (out.data[src] == '%' && dst >= 0) out.data[dst--] = '%';
+        }
+        out.len = newlen;
       }
-      out.len = newlen;
     }
     out.data[out.len] = '\0';
     __acpp_sscp_print(out.data);
@@ -1990,7 +2030,7 @@ template <print_detail::sycl_printable... Args>
 inline void print(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
   print_detail::fmt_buf out;
   print_detail::buffer_path::format_rt(out, ps, std::tuple<Args...>(args...));
-  print_detail::buffer_path::flush_buf(out);
+  print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
 
 template <print_detail::sycl_printable... Args>
@@ -1998,7 +2038,7 @@ inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps
   print_detail::fmt_buf out;
   print_detail::buffer_path::format_rt(out, ps, std::tuple<Args...>(args...));
   out.push('\n');
-  print_detail::buffer_path::flush_buf(out);
+  print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
 
 #endif // FMT_SYCL_ACPP
