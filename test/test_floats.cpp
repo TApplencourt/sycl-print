@@ -80,19 +80,5 @@ RUN(PRINT("{:.2f}\n", 3.14f));
 RUN(PRINT("{:+.4e}\n", 0.001f));
 RUN(PRINT("{:012.3f}\n", 42.0f));
 
-#ifdef FMT_SYCL_BUFFER_PATH_ONLY
-RUN(PRINT("{}\n", 1.0e10f));
-RUN(PRINT("{}\n", 1.0e-10f));
-RUN(PRINT("{}\n", 1.0e100));
-RUN(PRINT("{}\n", 1.0e-100));
-RUN(PRINT("{:a}\n", 3.14159));
-RUN(PRINT("{:A}\n", 3.14159));
-RUN(PRINT("{:a}\n", 0.0));
-RUN(PRINT("{:a}\n", -0.0));
-RUN(PRINT("{:a}\n", 1.0));
-RUN(PRINT("{:#a}\n", 3.14159));
-RUN(PRINT("{:e}\n", 5e-324));
-RUN(PRINT("{:g}\n", 5e-324));
-#endif
 
 #endif

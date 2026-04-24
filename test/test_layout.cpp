@@ -31,30 +31,5 @@ RUN(PRINT("{:<010d}\n", 42));
 RUN(PRINT("{:<010d}\n", -42));
 RUN(PRINT("{:010e}\n", -1.23));
 
-#ifdef FMT_SYCL_BUFFER_PATH_ONLY
-// Center align, fill, hex/oct align, bool fill
-RUN(PRINT("{:^10d}\n", 42));
-RUN(PRINT("{:*<10d}\n", 42));
-RUN(PRINT("{:*>10d}\n", 42));
-RUN(PRINT("{:*^10d}\n", 42));
-RUN(PRINT("{:#^20b}\n", 255));
-RUN(PRINT("{:+010x}\n", -1));
-RUN(PRINT("{:>20b}\n", static_cast<uint8_t>(255)));
-RUN(PRINT("{:*>5d}\n", -42));
-RUN(PRINT("{:<10x}\n", 255u));
-RUN(PRINT("{:>10x}\n", 255u));
-RUN(PRINT("{:^10x}\n", 255u));
-RUN(PRINT("{:<10o}\n", 255u));
-RUN(PRINT("{:>10o}\n", 255u));
-RUN(PRINT("{:*<10x}\n", 255u));
-RUN(PRINT("{:*>10x}\n", 255u));
-RUN(PRINT("{:*^10x}\n", 255u));
-RUN(PRINT("{:*<10o}\n", 255u));
-RUN(PRINT("{:1x}\n", 0xDEAD));
-RUN(PRINT("{:1b}\n", 255));
-RUN(PRINT("{:*<10}\n", true));
-RUN(PRINT("{:*>10}\n", false));
-RUN(PRINT("{:*^10}\n", true));
-#endif
 
 #endif

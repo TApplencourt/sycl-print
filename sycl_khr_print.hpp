@@ -27,6 +27,7 @@
 #include <type_traits>
 #include <utility> // std::index_sequence
 
+
 namespace sycl {
 #if !FMT_SYCL_ACPP
 inline namespace _V1 {
@@ -1781,6 +1782,7 @@ inline void format(fmt_buf &out, const std::tuple<Args...> &all_args) {
 
 } // namespace print_detail
 
+
 // ============================================================
 // Public API
 // ============================================================
@@ -1790,11 +1792,34 @@ inline void print(Args... args) {
 #if FMT_SYCL_ACPP
   print_detail::fmt_buf out;
   print_detail::buffer_path::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
-  out.data[out.len] = '\0';
-  if (__acpp_sscp_is_host)
-    printf("%s", out.data);
-  else
+  if (__acpp_sscp_is_host) {
+    out.data[out.len] = '\0';
+    fputs(out.data, stdout);
+  } else {
+    // ACPP SSCP __acpp_sscp_print has different backends:
+    //   PTX/CUDA: calls vprintf(msg, nullptr) — interprets % as format specifiers
+    //   Host/CPU: calls fputs(msg, stdout) — prints verbatim
+    // __acpp_sscp_is_host is false for BOTH backends in SSCP kernels, so we
+    // cannot distinguish at runtime. We escape % → %% here, which is correct
+    // for CUDA (vprintf renders %% as %). This breaks CPU SSCP (fputs prints
+    // %% literally), but we favor GPU correctness.
+    int pct = 0;
+    for (int i = 0; i < out.len; i++)
+      if (out.data[i] == '%') pct++;
+    if (pct > 0) {
+      int newlen = out.len + pct;
+      if (newlen > (int)print_detail::fmt_buf::cap)
+        newlen = print_detail::fmt_buf::cap;
+      for (int src = out.len - 1, dst = newlen - 1; src >= 0 && dst >= 0; src--) {
+        out.data[dst--] = out.data[src];
+        if (out.data[src] == '%' && dst >= 0)
+          out.data[dst--] = '%';
+      }
+      out.len = newlen;
+    }
+    out.data[out.len] = '\0';
     __acpp_sscp_print(out.data);
+  }
 #else
   if constexpr (sizeof...(Args) == 0) {
     // No args — just emit the literal

@@ -18,16 +18,22 @@ endif
 # ── Source files ────────────────────────────────────────────
 TEST_DIR    := test
 TEST_NAMES  := integers floats strings layout misc
+ifdef USE_ACPP
+  TEST_NAMES += buffer_path escape_percent
+endif
 TEST_HDRS   := $(wildcard $(TEST_DIR)/*.hpp $(TEST_DIR)/*.inc)
 
 # Derived binary names (all in build/)
 TEST_BINS := $(foreach t,$(TEST_NAMES),$(foreach o,$(OPT_LEVELS),build/test_$(t)_$(o)))
 FUZZ_BINS := $(addprefix build/fuzz_,$(OPT_LEVELS))
 FUZZ_FM   := $(addprefix build/fuzz_ffast_,$(OPT_LEVELS))
+ifdef USE_ACPP
+  FUZZ_PCT := $(addprefix build/fuzz_escape_percent_,$(OPT_LEVELS))
+endif
 
-ALL_BINS := $(TEST_BINS) $(FUZZ_BINS) $(FUZZ_FM)
+ALL_BINS := $(TEST_BINS) $(FUZZ_BINS) $(FUZZ_FM) $(FUZZ_PCT)
 
-.PHONY: all build test test-format test-fuzz test-ffast \
+.PHONY: all build test test-format test-fuzz test-fuzz-pct test-ffast \
         readme-examples clean
 
 all: test
@@ -56,6 +62,10 @@ build/fuzz_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | 
 build/fuzz_ffast_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
 	@TIMEFORMAT="  compile fuzz_ffast_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(BUFFER_PATH) $(WA_$*) $< -o $@
+
+build/fuzz_escape_percent_%: $(TEST_DIR)/fuzz_escape_percent.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+	@TIMEFORMAT="  compile fuzz_escape_percent_$*: %Rs"; time \
+	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
 
 # README examples
 build/example_readme%: example_readme%.cpp sycl_khr_print.hpp | build/
@@ -101,6 +111,19 @@ test-fuzz: $(FUZZ_BINS)
 	  else echo "fuzz -$$opt: FAIL ($${ms}ms)"; fail=1; fi; \
 	done; \
 	exit $$fail
+
+ifdef USE_ACPP
+test-fuzz-pct: $(FUZZ_PCT)
+	@fail=0; \
+	for opt in $(OPT_LEVELS); do \
+	  t0=$$(date +%s%N); \
+	  ./build/fuzz_escape_percent_$$opt; rc=$$?; \
+	  ms=$$(( ($$(date +%s%N) - t0) / 1000000 )); \
+	  if [ $$rc -eq 0 ]; then echo "fuzz_escape_percent -$$opt: PASS ($${ms}ms)"; \
+	  else echo "fuzz_escape_percent -$$opt: FAIL ($${ms}ms)"; fail=1; fi; \
+	done; \
+	exit $$fail
+endif
 
 test-ffast: $(FUZZ_FM)
 	@fail=0; \

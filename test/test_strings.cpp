@@ -56,22 +56,5 @@ RUN(PRINT("{:>10.5s}\n", "hello world"));
 RUN(PRINT("{:<10.3s}\n", "hello"));
 #endif
 
-#ifdef FMT_SYCL_BUFFER_PATH_ONLY
-RUN(PRINT("{:*^10}\n", true));
-RUN(PRINTLN("{:08x}", 255));
-RUN(PRINT("{:10c}\n", 'A'));
-RUN(PRINT("{:^10c}\n", 'D'));
-RUN(PRINT("{:*>5c}\n", 'X'));
-RUN(PRINT("{:*<5c}\n", 'X'));
-RUN(PRINT("{:*^5c}\n", 'X'));
-#endif
-
-#if !defined(FMT_SYCL_WA_STR) && defined(FMT_SYCL_BUFFER_PATH_ONLY)
-RUN(PRINT("{:20s}\n", "hello"));
-RUN(PRINT("{:*^10.5s}\n", "hello world"));
-RUN(PRINT("{:*<20s}\n", "hello"));
-RUN(PRINT("{:*>20s}\n", "hello"));
-RUN(PRINT("{:*^20s}\n", "hello"));
-#endif
 
 #endif

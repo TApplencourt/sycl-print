@@ -30,17 +30,5 @@ RUN(PRINT("{:d}\n", -2147483647 - 1));
 RUN(PRINT("{:d}\n", static_cast<int64_t>(-9223372036854775807LL - 1)));
 RUN(PRINT("{}\n", static_cast<int64_t>(-9223372036854775807LL - 1)));
 
-#ifdef FMT_SYCL_BUFFER_PATH_ONLY
-RUN(PRINT("{:b}\n", 255));
-RUN(PRINT("{:B}\n", 255));
-RUN(PRINT("{:#x}\n", 255));
-RUN(PRINT("{:#b}\n", 255));
-RUN(PRINT("{:x}\n", -2147483647 - 1));
-RUN(PRINT("{:b}\n", -2147483647 - 1));
-RUN(PRINT("{:b}\n", static_cast<uint64_t>(18446744073709551615ULL)));
-RUN(PRINT("{:#b}\n", 0));
-RUN(PRINT("{:x}\n", static_cast<int>(-1)));
-RUN(PRINT("{:#x}\n", 0));
-#endif
 
 #endif

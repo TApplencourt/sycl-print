@@ -121,3 +121,7 @@ make test-format       # Format correctness (diff against std::format)
 make test-fuzz         # Fuzz with random values
 make test-ffast        # Fuzz with -ffast-math
 ```
+
+For ACPP builds (`make ... USE_ACPP=1`):
+- `test_buffer_path` tests ACPP-only features (binary, hex float, center align, custom fill, etc.) and is only compiled with `USE_ACPP=1`.
+- `test_escape_percent` and `fuzz_escape_percent` test `%` in formatted output. These are expected to fail on CPU because `%` → `%%` escaping is applied to work around CUDA's `vprintf` interpreting `%` as format specifiers. They should pass on GPU.

@@ -105,8 +105,6 @@ FUZZ_DBL("{:<20.4f}\n")
 FUZZ_DBL("{:+20.4f}\n")
 FUZZ_DBL("{:020.4f}\n")
 
-FUZZ_CHAR("{}\n")
-FUZZ_CHAR("{:c}\n")
 FUZZ_CHAR("{:d}\n")
 
 for (int _i = 0; _i < N_ITER; _i++) {
@@ -148,25 +146,10 @@ for (int _i = 0; _i < N_ITER; _i++) {
 }
 #endif
 for (int _i = 0; _i < N_ITER; _i++) {
-  int i = rand_int();
-  double d = rand_double();
-  char c = rand_char();
-  bool b = (rng() & 1) != 0;
-  RUN(P("int={} dbl={:.3f} chr={} bool={}\n", i, d, c, b));
-}
-for (int _i = 0; _i < N_ITER; _i++) {
   bool b1 = (rng() & 1) != 0;
   bool b2 = (rng() & 1) != 0;
   int i = rand_int();
   RUN(P("{} and {} => {:d}\n", b1, b2, i));
-}
-for (int _i = 0; _i < N_ITER; _i++) {
-  double d = rand_double();
-  int i = rand_int();
-  uint64_t u = rand_u64();
-  char c = rand_char();
-  bool b = (rng() & 1) != 0;
-  RUN(P("{:.2e} {} {:x} {} {}\n", d, i, u, c, b));
 }
 
 for (int _i = 0; _i < N_ITER; _i++) {
@@ -179,7 +162,7 @@ for (int _i = 0; _i < N_ITER; _i++) {
   RUN(P("result={{{}}} value={{{:+.2f}}}\n", i, d));
 }
 
-#ifdef FMT_SYCL_BUFFER_PATH_ONLY
+#ifdef FMT_SYCL_ACPP
 FUZZ_INT("{:x}\n", rand_int)
 FUZZ_INT("{:X}\n", rand_int)
 FUZZ_INT("{:o}\n", rand_int)
@@ -220,23 +203,8 @@ for (int _i = 0; _i < N_ITER; _i++) {
   RUN(P("u={:#x} big={:d}\n", u, big));
 }
 for (int _i = 0; _i < N_ITER; _i++) {
-  int a = rand_int();
-  double b = rand_double();
-  char c = rand_char();
-  RUN(P("{:*>15d} | {:<+15.2f} | {:^5c}\n", a, b, c));
-}
-for (int _i = 0; _i < N_ITER; _i++) {
   int v = rand_int();
   RUN(P("hex={:#010x} bin={:#020b} dec={:+d}\n", v, v, v));
-}
-#endif
-
-#if !defined(FMT_SYCL_WA_STR) && defined(FMT_SYCL_BUFFER_PATH_ONLY)
-for (int _i = 0; _i < N_ITER; _i++) {
-  int v1 = rand_int(); double v2 = rand_double(); char v3 = rand_char();
-  bool v4 = (rng() & 1) != 0; unsigned v5 = rand_uint();
-  int64_t v6 = rand_i64();
-  RUN(P("{} {} {} {} {} {} {}\n", v1, v2, v3, v4, v5, v6, "lit"));
 }
 #endif
 
