@@ -1336,8 +1336,6 @@ inline void write(fmt_buf &out, const char *s) {
 }
 
 template <typename T> inline void write_decimal(fmt_buf &out, T val) {
-  char tmp[22]{};
-  int i = 20;
   using U = std::make_unsigned_t<T>;
   bool neg = false;
   U uval;
@@ -1347,17 +1345,20 @@ template <typename T> inline void write_decimal(fmt_buf &out, T val) {
   } else {
     uval = static_cast<U>(val);
   }
-  if (uval == 0) {
-    tmp[i--] = '0';
-  } else {
-    while (uval > 0) {
-      tmp[i--] = '0' + static_cast<char>(uval % 10);
-      uval /= 10;
-    }
+  // Count digits first so we know the final position and can write directly
+  // into out.data right-to-left. The 32-byte pad in fmt_buf ensures safety.
+  int nd = 1;
+  for (U t = uval; t >= 10; t /= 10) nd++;
+  int total = nd + (neg ? 1 : 0);
+  int pos = out.len + total - 1;
+  while (uval >= 10) {
+    out.data[pos--] = '0' + static_cast<char>(uval % 10);
+    uval /= 10;
   }
-  if (neg)
-    tmp[i--] = '-';
-  write(out, tmp + i + 1);
+  out.data[pos--] = '0' + static_cast<char>(uval);
+  if (neg) out.data[pos] = '-';
+  out.len += total;
+  if (out.len > fmt_buf::cap) out.len = fmt_buf::cap;
 }
 
 template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
