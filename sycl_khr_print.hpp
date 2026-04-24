@@ -942,7 +942,9 @@ template <typename U, char SpecType> consteval char effective_type() {
 
 struct fmt_buf {
   static constexpr int cap = KHR_SYCL_PRINT_BUFFER_SIZE;
-  char data[cap + 1]{};
+  // Extra 32 bytes let dragonbox write directly into data[len] without a
+  // temporary buffer; len is clamped to cap afterwards.
+  char data[cap + 32]{};
   int len = 0;
   void push(char c) {
     if (len < cap)
@@ -1380,10 +1382,8 @@ template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
     } else if (__builtin_isnan(val)) {
       write(out, "nan");
     } else {
-      char dbuf[24];
-      int dlen = dragonbox::format_shortest(dbuf, val);
-      for (int k = 0; k < dlen; k++)
-        out.push(dbuf[k]);
+      out.len += dragonbox::format_shortest(out.data + out.len, val);
+      if (out.len > fmt_buf::cap) out.len = fmt_buf::cap;
     }
   } else if constexpr (std::is_pointer_v<U>) {
     using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
