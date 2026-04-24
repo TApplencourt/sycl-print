@@ -6,7 +6,6 @@ ifdef USE_ACPP
   CXX             := acpp
   SYCLFLAGS       := --acpp-targets=generic
   OPT_LEVELS      := O0
-  BUFFER_PATH     := -DFMT_SYCL_BUFFER_PATH_ONLY
 else
   CXX             := icpx
   SYCLFLAGS       := -fsycl
