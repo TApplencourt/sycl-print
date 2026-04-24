@@ -50,7 +50,7 @@ int main() {
 
   rng_state = SEED;
   auto sycl_out = capture_stdout([&]() {
-#define P(fmt_str, ...) ::sycl::khr::print<fmt_str>(__VA_ARGS__)
+#define P(fmt_str, ...) KHR_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define RUN(...) q.parallel_for(N, [=](::sycl::id<1>) { __VA_ARGS__; }).wait()
 #include FUZZ_BODY
 #undef RUN

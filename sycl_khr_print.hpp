@@ -783,19 +783,19 @@ concept sycl_printable = std::same_as<T, bool> || std::same_as<T, char> || std::
 // Format spec parsing and printf format string generation
 // ============================================================
 
-consteval bool is_type_char(char c) {
+constexpr bool is_type_char(char c) {
   return c == 'd' || c == 'x' || c == 'X' || c == 'o' || c == 'b' || c == 'B' || c == 'f' ||
          c == 'F' || c == 'e' || c == 'E' || c == 'g' || c == 'G' || c == 'a' || c == 'A' ||
          c == 'c' || c == 's' || c == 'p';
 }
 
-consteval bool is_align_char(char c) { return c == '<' || c == '>' || c == '^'; }
+constexpr bool is_align_char(char c) { return c == '<' || c == '>' || c == '^'; }
 
-consteval bool is_int_format(char c) {
+constexpr bool is_int_format(char c) {
   return c == 'd' || c == 'u' || c == 'x' || c == 'X' || c == 'o' || c == 'b' || c == 'B';
 }
 
-consteval bool is_float_format(char c) {
+constexpr bool is_float_format(char c) {
   return c == 'f' || c == 'F' || c == 'e' || c == 'E' || c == 'g' || c == 'G' || c == 'a' ||
          c == 'A';
 }
@@ -821,7 +821,7 @@ struct format_spec {
 // Parse a dynamic arg reference {N} or {} inside a spec.
 // Returns the arg index (or auto_idx if {}), advances i past '}'.
 // Sets auto_idx to -1 after first manual use.
-consteval int parse_dynamic_arg(const char *data, size_t len, size_t &i, int &auto_idx) {
+constexpr int parse_dynamic_arg(const char *data, size_t len, size_t &i, int &auto_idx) {
   // i points at '{'
   i++; // skip '{'
   int idx;
@@ -932,6 +932,166 @@ template <typename U, char SpecType> consteval char effective_type() {
   }
 }
 
+#if FMT_SYCL_ACPP
+// ============================================================
+// Runtime parsing + print_string (ACPP only)
+// ============================================================
+
+// Runtime version of find_placeholder — works on const char* instead of fixed_string NTTP
+constexpr placeholder_info find_placeholder_rt(const char *s, int len, int from) {
+  int i = from;
+  while (i < len) {
+    if (s[i] == '{') {
+      if (i + 1 < len && s[i + 1] == '{') { i += 2; continue; }
+      int j = i + 1;
+      int index = -1;
+      if (j < len && s[j] >= '0' && s[j] <= '9') {
+        index = 0;
+        while (j < len && s[j] >= '0' && s[j] <= '9') {
+          index = index * 10 + (s[j] - '0');
+          j++;
+        }
+      }
+      bool has_spec = false;
+      int spec_beg = j;
+      if (j < len && s[j] == ':') {
+        has_spec = true;
+        spec_beg = j + 1;
+        j++;
+        int depth = 0;
+        while (j < len) {
+          if (s[j] == '{') depth++;
+          else if (s[j] == '}') { if (depth == 0) break; depth--; }
+          j++;
+        }
+      }
+      int close = j;
+      if (!has_spec) spec_beg = close;
+      return {static_cast<size_t>(i), static_cast<size_t>(close),
+              static_cast<size_t>(spec_beg), has_spec, true, index};
+    } else if (s[i] == '}') {
+      if (i + 1 < len && s[i + 1] == '}') { i += 2; continue; }
+      i++;
+    } else {
+      i++;
+    }
+  }
+  return {0, 0, 0, false, false, -1};
+}
+
+// Runtime version of parse_spec — works on const char* instead of fixed_string NTTP
+constexpr format_spec parse_spec_rt(const char *data, int begin, int end,
+                                    int dyn_auto_start = -1) {
+  format_spec s{};
+  size_t i = static_cast<size_t>(begin);
+  size_t e = static_cast<size_t>(end);
+  int dyn_auto = dyn_auto_start;
+
+  if (i + 1 < e && is_align_char(data[i + 1])) {
+    s.fill = data[i]; s.align = data[i + 1]; i += 2;
+  } else if (i < e && is_align_char(data[i])) {
+    s.align = data[i]; i++;
+  }
+  if (i < e && (data[i] == '+' || data[i] == '-' || data[i] == ' ')) {
+    s.sign = data[i]; i++;
+  }
+  if (i < e && data[i] == '#') { s.alt = true; i++; }
+  if (i < e && data[i] == '0') { s.zero_pad = true; i++; }
+  if (i < e && data[i] == '{') {
+    s.width_arg = parse_dynamic_arg(data, e, i, dyn_auto);
+  } else {
+    while (i < e && data[i] >= '0' && data[i] <= '9') {
+      s.width = s.width * 10 + (data[i] - '0'); i++;
+    }
+  }
+  if (i < e && data[i] == '.') {
+    i++; s.precision = 0;
+    if (i < e && data[i] == '{') {
+      s.prec_arg = parse_dynamic_arg(data, e, i, dyn_auto);
+      s.precision = -1;
+    } else {
+      while (i < e && data[i] >= '0' && data[i] <= '9') {
+        s.precision = s.precision * 10 + (data[i] - '0'); i++;
+      }
+    }
+  }
+  if (i < e && is_type_char(data[i])) { s.type = data[i]; }
+  s.dyn_count = (dyn_auto >= 0 && dyn_auto_start >= 0) ? (dyn_auto - dyn_auto_start) : 0;
+  return s;
+}
+
+// Runtime version of effective_type — spec_type is a runtime parameter
+template <typename U> constexpr char effective_type_rt(char spec_type) {
+  if (spec_type != '\0') return spec_type;
+  if constexpr (std::same_as<U, bool>) return 's';
+  else if constexpr (std::same_as<U, char>) return 'c';
+  else if constexpr (std::floating_point<U>) return 'g';
+  else if constexpr (std::signed_integral<U>) return 'd';
+  else if constexpr (std::unsigned_integral<U>) return 'u';
+  else if constexpr (std::is_pointer_v<U>) {
+    using P = std::remove_cv_t<std::remove_pointer_t<U>>;
+    if constexpr (std::same_as<P, char>) return 's';
+    else return 'p';
+  }
+}
+
+// Pre-parsed placeholder entry — populated at compile time, consumed at runtime.
+struct ph_entry {
+  uint8_t open;
+  uint8_t close;
+  int8_t arg_idx;
+  bool has_spec;
+  format_spec spec;
+};
+
+// print_string — consteval-validated format string for print("...", args...) syntax.
+// Placeholders and specs are pre-parsed at compile time into phs[].
+template <sycl_printable... Args>
+struct print_string {
+  static constexpr int MAX_LEN = 256;
+  static constexpr int MAX_PH = 16;
+  char str[MAX_LEN]{};
+  int len;
+  ph_entry phs[MAX_PH]{};
+  int ph_count = 0;
+
+  template <size_t N>
+  consteval print_string(const char (&s)[N]) : len(static_cast<int>(N - 1)) {
+    static_assert(N <= MAX_LEN, "format string too long");
+    for (size_t i = 0; i < N; i++) str[i] = s[i];
+    int pos = 0, auto_idx = 0;
+    constexpr int n_args = static_cast<int>(sizeof...(Args));
+    while (true) {
+      auto info = find_placeholder_rt(s, len, pos);
+      if (!info.found) break;
+      if (ph_count >= MAX_PH)
+        throw "too many placeholders (max 16)";
+      int arg_i = (info.index >= 0) ? info.index : auto_idx;
+      if (arg_i < 0 || arg_i >= n_args)
+        throw "format argument index out of range";
+      ph_entry &e = phs[ph_count++];
+      e.open = static_cast<uint8_t>(info.open);
+      e.close = static_cast<uint8_t>(info.close);
+      e.arg_idx = static_cast<int8_t>(arg_i);
+      e.has_spec = info.has_spec && info.close > info.spec_beg;
+      if (e.has_spec) {
+        int dyn_auto = (info.index < 0) ? auto_idx + 1 : -1;
+        e.spec = parse_spec_rt(s, static_cast<int>(info.spec_beg),
+                               static_cast<int>(info.close), dyn_auto);
+        if (e.spec.width_arg >= 0 && e.spec.width_arg >= n_args)
+          throw "dynamic width argument index out of range";
+        if (e.spec.prec_arg >= 0 && e.spec.prec_arg >= n_args)
+          throw "dynamic precision argument index out of range";
+        if (info.index < 0) auto_idx += 1 + e.spec.dyn_count;
+      } else {
+        if (info.index < 0) auto_idx++;
+      }
+      pos = static_cast<int>(info.close) + 1;
+    }
+  }
+};
+#endif // FMT_SYCL_ACPP
+
 // ============================================================
 // Device-side buffer (used by ACPP accumulator path)
 // ============================================================
@@ -967,22 +1127,26 @@ inline void push_bool(fmt_buf &buf, bool val) {
     buf.push_str("false");
 }
 
-// Write an unsigned integer in any base directly into buf.data right-to-left
-// from buf.len. Uses the 32-byte fmt_buf pad — no temporary array needed.
+// Write an unsigned integer in any base into raw (data, len, cap) right-to-left.
 template <int Base, bool Upper = false, typename U>
-inline void write_uint_direct(fmt_buf &buf, U val) {
+inline void write_uint_raw(char *data, int &len, int cap, U val) {
   static_assert(Base == 2 || Base == 8 || Base == 10 || Base == 16);
-  if (val == 0) { buf.push('0'); return; }
+  if (val == 0) { if (len < cap) data[len++] = '0'; return; }
   int n = 0;
   for (U t = val; t > 0; t /= U(Base)) n++;
-  int pos = buf.len + n - 1;
+  int pos = len + n - 1;
   while (val > 0) {
     int d = static_cast<int>(val % U(Base));
-    buf.data[pos--] = Upper ? "0123456789ABCDEF"[d] : "0123456789abcdef"[d];
+    data[pos--] = Upper ? "0123456789ABCDEF"[d] : "0123456789abcdef"[d];
     val /= U(Base);
   }
-  buf.len += n;
-  if (buf.len > fmt_buf::cap) buf.len = fmt_buf::cap;
+  len += n;
+  if (len > cap) len = cap;
+}
+
+template <int Base, bool Upper = false, typename U>
+inline void write_uint_direct(fmt_buf &buf, U val) {
+  write_uint_raw<Base, Upper>(buf.data, buf.len, buf.cap + 32, val);
 }
 
 // Format unsigned integer into buffer in given base
@@ -997,82 +1161,6 @@ inline char hex_digit(int d, bool upper) {
   if (d < 10)
     return static_cast<char>('0' + d);
   return static_cast<char>((upper ? 'A' : 'a') + d - 10);
-}
-
-// Build hex float content into buf — shared by DPC++ and ACPP paths.
-template <format_spec Spec, char EffType, typename T>
-inline void hex_float_to_buf(fmt_buf &content, T arg) {
-  static_assert(EffType == 'a' || EffType == 'A', "hex_float_to_buf: EffType must be 'a' or 'A'");
-  double val = static_cast<double>(arg);
-  constexpr bool upper = (EffType == 'A');
-
-  // Extract IEEE 754 bits (must do before sign check for -0.0)
-  uint64_t bits = __builtin_bit_cast(uint64_t, val);
-  bool negative = (bits >> 63) != 0;
-
-  // Sign (use sign bit, not val < 0, to catch -0.0)
-  if (negative) {
-    content.push('-');
-    val = -val;
-    bits &= 0x7FFFFFFFFFFFFFFFULL;
-  } else if (Spec.sign == '+')
-    content.push('+');
-  else if (Spec.sign == ' ')
-    content.push(' ');
-
-  // std::format {:a} never adds 0x prefix (unlike printf)
-  // # only forces the decimal point (handled below)
-  int biased_exp = static_cast<int>((bits >> 52) & 0x7FF); // sign already cleared
-  uint64_t mantissa = bits & 0x000FFFFFFFFFFFFFULL;
-
-  // Inf / NaN
-  if (biased_exp == 0x7FF) {
-    content.push_str((mantissa == 0) ? (upper ? "INF" : "inf") : (upper ? "NAN" : "nan"));
-    return;
-  }
-
-  // Leading digit + exponent
-  int exponent;
-  if (biased_exp == 0) {
-    if (mantissa == 0) { // zero
-      content.push('0');
-      content.push(upper ? 'P' : 'p');
-      content.push('+');
-      content.push('0');
-      return;
-    }
-    content.push('0'); // subnormal
-    exponent = -1022;
-  } else {
-    content.push('1'); // normal
-    exponent = biased_exp - 1023;
-  }
-
-  // Fractional mantissa (52 bits = 13 hex digits, trim trailing zeros)
-  if (mantissa != 0 || Spec.alt) {
-    content.push('.');
-    if (mantissa != 0) {
-      int last_nz = -1;
-      for (int i = 0; i < 13; i++)
-        if (((mantissa >> (48 - i * 4)) & 0xF) != 0)
-          last_nz = i;
-      for (int i = 0; i <= last_nz; i++)
-        content.push(hex_digit(static_cast<int>((mantissa >> (48 - i * 4)) & 0xF), upper));
-    }
-  }
-
-  // Exponent
-  content.push(upper ? 'P' : 'p');
-  if (exponent >= 0)
-    content.push('+');
-  else {
-    content.push('-');
-    exponent = -exponent;
-  }
-  if (exponent == 0)
-    content.push('0');
-  else
-    write_uint_direct<10>(content, static_cast<unsigned>(exponent));
 }
 
 // Cast an arg to its printf-compatible type.
@@ -1366,9 +1454,13 @@ template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
       out.push('-');
       val = -val;
     }
-    if (__builtin_isinf(val)) {
+    bits_t fbits = __builtin_bit_cast(bits_t, val);
+    constexpr int exp_bits = std::is_same_v<U, float> ? 8 : 11;
+    constexpr bits_t exp_mask = ((bits_t(1) << exp_bits) - 1) << (sizeof(bits_t) * 8 - 1 - exp_bits);
+    constexpr bits_t mant_mask = (bits_t(1) << (sizeof(bits_t) * 8 - 1 - exp_bits)) - 1;
+    if ((fbits & exp_mask) == exp_mask && (fbits & mant_mask) == 0) {
       write(out, "inf");
-    } else if (__builtin_isnan(val)) {
+    } else if ((fbits & exp_mask) == exp_mask) {
       write(out, "nan");
     } else {
       out.len += dragonbox::format_shortest(out.data + out.len, val);
@@ -1383,13 +1475,6 @@ template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
   }
 }
 
-template <fixed_string Lit> inline void write_literal(fmt_buf &out) {
-  constexpr size_t len = flen(Lit);
-  if constexpr (len > 0) {
-    for (size_t i = 0; i < len; i++)
-      out.push(Lit[i]);
-  }
-}
 
 // Append fmt_buf src into accumulator out.
 inline void append_buf(fmt_buf &out, const fmt_buf &src) {
@@ -1419,71 +1504,14 @@ inline void apply_padding(fmt_buf &out, const fmt_buf &content, char fill, char 
   }
 }
 
-// Format a single integer argument with full spec support into out.
-// Mirrors format_int_buf but targets the accumulator directly.
-template <format_spec Spec, char EffType, typename T>
-inline void write_int(fmt_buf &out, T arg, int width = Spec.width) {
-  static_assert(is_int_format(EffType));
-  using U = std::decay_t<T>;
-  using Uns = std::conditional_t<(sizeof(U) <= 4), unsigned, unsigned long long>;
-  constexpr int base = (EffType == 'b' || EffType == 'B')   ? 2
-                       : (EffType == 'o')                   ? 8
-                       : (EffType == 'x' || EffType == 'X') ? 16
-                                                            : 10;
-  constexpr bool upper = (EffType == 'X' || EffType == 'B');
-
-  bool neg = false;
-  Uns uval;
-  if constexpr (std::same_as<U, bool>) {
-    uval = static_cast<Uns>(arg);
-  } else if constexpr (std::signed_integral<U>) {
-    if (arg < 0) {
-      neg = true;
-      uval = Uns(0) - static_cast<Uns>(arg);
-    } else
-      uval = static_cast<Uns>(arg);
-  } else {
-    uval = static_cast<Uns>(arg);
-  }
-
-  char sc = neg ? '-' : (Spec.sign == '+') ? '+' : (Spec.sign == ' ') ? ' ' : '\0';
-
-  char pfx[3] = {};
-  int pfx_n = 0;
-  if constexpr (Spec.alt) {
-    if constexpr (base == 2) {
-      pfx[0] = '0';
-      pfx[1] = upper ? 'B' : 'b';
-      pfx_n = 2;
-    } else if constexpr (base == 16) {
-      pfx[0] = '0';
-      pfx[1] = upper ? 'X' : 'x';
-      pfx_n = 2;
-    } else if constexpr (base == 8) {
-      if (uval != 0) {
-        pfx[0] = '0';
-        pfx_n = 1;
-      }
-    }
-  }
-
-  fmt_buf digits;
-  uint_to_buf<base, upper>(digits, uval);
-
-  int content_w = (sc ? 1 : 0) + pfx_n + digits.len;
-  bool zpad = Spec.zero_pad && !Spec.fill && !Spec.align;
-
-  fmt_buf content;
-  if (sc)
-    content.push(sc);
-  for (int i = 0; i < pfx_n; i++)
-    content.push(pfx[i]);
-  if (zpad && width > content_w)
-    content.push_n('0', width - content_w);
-  for (int i = 0; i < digits.len; i++)
-    content.push(digits.data[i]);
-
-  apply_padding(out, content, Spec.fill_or(), Spec.align_or(), width);
+inline void apply_padding_data(fmt_buf &out, const char *data, int len,
+                               char fill, char align, int width) {
+  int pad = width > len ? width - len : 0;
+  auto emit = [&]() { for (int i = 0; i < len; i++) out.push(data[i]); };
+  if (pad == 0) { emit(); }
+  else if (align == '<') { emit(); out.push_n(fill, pad); }
+  else if (align == '^') { out.push_n(fill, pad / 2); emit(); out.push_n(fill, pad - pad / 2); }
+  else { out.push_n(fill, pad); emit(); }
 }
 
 // ── Float formatting helpers ──────────────────────────────────────────────────
@@ -1541,11 +1569,12 @@ inline void fmt_sci(fmt_buf &out, double val, int prec, bool upper, bool alt = f
       val = tmp;
     }
     // If rounding would make the mantissa overflow to 10 (e.g. 9.999... rounds
-    // to 10.00000), detect it by pre-formatting and adjust before the real emit.
+    // to 10.00000), detect with the same arithmetic as fmt_fixed and adjust.
     {
-      fmt_buf check;
-      fmt_fixed(check, val, prec, false);
-      if (check.len >= 2 && check.data[0] == '1' && check.data[1] == '0') {
+      double scale = 1.0;
+      for (int i = 0; i < prec; i++) scale *= 10.0;
+      uint64_t total = static_cast<uint64_t>(val * scale + 0.5);
+      if (total / static_cast<uint64_t>(scale) >= 10) {
         val /= 10.0;
         exp++;
       }
@@ -1561,12 +1590,12 @@ inline void fmt_sci(fmt_buf &out, double val, int prec, bool upper, bool alt = f
   write_decimal(out, static_cast<unsigned>(exp));
 }
 
-// Remove trailing zeros (and decimal point) from the fractional part of buf,
+// Remove trailing zeros (and decimal point) from buf[start..len),
 // stopping at 'e'/'E' if present (scientific notation).
-inline void trim_trailing_zeros(fmt_buf &buf) {
+inline void trim_trailing_zeros(fmt_buf &buf, int start = 0) {
   int dot_pos = -1;
   int e_pos = buf.len;
-  for (int i = 0; i < buf.len; i++) {
+  for (int i = start; i < buf.len; i++) {
     if (buf.data[i] == '.')
       dot_pos = i;
     else if (buf.data[i] == 'e' || buf.data[i] == 'E') {
@@ -1608,170 +1637,304 @@ inline void fmt_g(fmt_buf &out, double val, int prec, bool upper, bool alt) {
       }
     }
   }
-  fmt_buf tmp_buf;
+  int start = out.len;
   if (exp >= -4 && exp < prec) {
     int f_prec = prec - (exp + 1);
     if (f_prec < 0)
       f_prec = 0;
-    fmt_fixed(tmp_buf, val, f_prec, alt);
+    fmt_fixed(out, val, f_prec, alt);
   } else {
-    fmt_sci(tmp_buf, val, prec - 1, upper, alt);
+    fmt_sci(out, val, prec - 1, upper, alt);
   }
   if (!alt)
-    trim_trailing_zeros(tmp_buf);
-  append_buf(out, tmp_buf);
+    trim_trailing_zeros(out, start);
 }
 
-// Format a float/double argument with full spec (width, prec, sign, fill, zero-pad).
-template <format_spec Spec, char EffType, typename T>
-inline void write_float(fmt_buf &out, T arg, int dyn_w = Spec.width, int dyn_p = Spec.precision) {
-  // Hex float: sign and content handled entirely by hex_float_to_buf
-  if constexpr (EffType == 'a' || EffType == 'A') {
+// ============================================================
+// Runtime-spec formatting (for print("...", args...) syntax)
+// ============================================================
+
+// hex_float_to_buf with runtime spec
+template <typename T>
+inline void hex_float_to_buf_rt(fmt_buf &content, T arg, const format_spec &spec, bool upper) {
+  double val = static_cast<double>(arg);
+  uint64_t bits = __builtin_bit_cast(uint64_t, val);
+  bool negative = (bits >> 63) != 0;
+  if (negative) {
+    content.push('-'); val = -val; bits &= 0x7FFFFFFFFFFFFFFFULL;
+  } else if (spec.sign == '+') content.push('+');
+  else if (spec.sign == ' ') content.push(' ');
+
+  int biased_exp = static_cast<int>((bits >> 52) & 0x7FF);
+  uint64_t mantissa = bits & 0x000FFFFFFFFFFFFFULL;
+  if (biased_exp == 0x7FF) {
+    content.push_str((mantissa == 0) ? (upper ? "INF" : "inf") : (upper ? "NAN" : "nan"));
+    return;
+  }
+  int exponent;
+  if (biased_exp == 0) {
+    if (mantissa == 0) { content.push('0'); content.push(upper ? 'P' : 'p'); content.push('+'); content.push('0'); return; }
+    content.push('0'); exponent = -1022;
+  } else {
+    content.push('1'); exponent = biased_exp - 1023;
+  }
+  if (mantissa != 0 || spec.alt) {
+    content.push('.');
+    if (mantissa != 0) {
+      int last_nz = -1;
+      for (int i = 0; i < 13; i++)
+        if (((mantissa >> (48 - i * 4)) & 0xF) != 0) last_nz = i;
+      for (int i = 0; i <= last_nz; i++)
+        content.push(hex_digit(static_cast<int>((mantissa >> (48 - i * 4)) & 0xF), upper));
+    }
+  }
+  content.push(upper ? 'P' : 'p');
+  if (exponent >= 0) content.push('+');
+  else { content.push('-'); exponent = -exponent; }
+  if (exponent == 0) content.push('0');
+  else write_uint_direct<10>(content, static_cast<unsigned>(exponent));
+}
+
+// write_int with runtime spec and etype — writes directly to out (no fmt_buf temporaries)
+template <typename T>
+inline void write_int_rt(fmt_buf &out, T arg, const format_spec &spec, char etype, int width) {
+  using U = std::decay_t<T>;
+  using Uns = std::conditional_t<(sizeof(U) <= 4), unsigned, unsigned long long>;
+
+  bool neg = false;
+  Uns uval;
+  if constexpr (std::same_as<U, bool>) {
+    uval = static_cast<Uns>(arg);
+  } else if constexpr (std::signed_integral<U>) {
+    if (arg < 0) { neg = true; uval = Uns(0) - static_cast<Uns>(arg); }
+    else uval = static_cast<Uns>(arg);
+  } else {
+    uval = static_cast<Uns>(arg);
+  }
+
+  char sc = neg ? '-' : (spec.sign == '+') ? '+' : (spec.sign == ' ') ? ' ' : '\0';
+
+  int base = (etype == 'b' || etype == 'B') ? 2 : (etype == 'o') ? 8
+             : (etype == 'x' || etype == 'X') ? 16 : 10;
+  bool upper = (etype == 'X' || etype == 'B');
+
+  char pfx[3] = {};
+  int pfx_n = 0;
+  if (spec.alt) {
+    if (base == 2)       { pfx[0] = '0'; pfx[1] = upper ? 'B' : 'b'; pfx_n = 2; }
+    else if (base == 16) { pfx[0] = '0'; pfx[1] = upper ? 'X' : 'x'; pfx_n = 2; }
+    else if (base == 8 && uval != 0) { pfx[0] = '0'; pfx_n = 1; }
+  }
+
+  char dgt[68];
+  int dlen = 0;
+  switch (base) {
+    case 2:  write_uint_raw<2,  false>(dgt, dlen, 68, uval); break;
+    case 8:  write_uint_raw<8,  false>(dgt, dlen, 68, uval); break;
+    case 16: if (upper) write_uint_raw<16, true>(dgt, dlen, 68, uval);
+             else       write_uint_raw<16, false>(dgt, dlen, 68, uval);
+             break;
+    default: write_uint_raw<10, false>(dgt, dlen, 68, uval); break;
+  }
+
+  int content_w = (sc ? 1 : 0) + pfx_n + dlen;
+  bool zpad = spec.zero_pad && !spec.fill && !spec.align;
+  int zfill = (zpad && width > content_w) ? width - content_w : 0;
+  int total = content_w + zfill;
+
+  char fill = spec.fill_or();
+  char align = spec.align_or();
+  int pad = width > total ? width - total : 0;
+  int lpad = (align == '>') ? pad : (align == '^') ? pad / 2 : 0;
+  int rpad = pad - lpad;
+
+  out.push_n(fill, lpad);
+  if (sc) out.push(sc);
+  for (int i = 0; i < pfx_n; i++) out.push(pfx[i]);
+  out.push_n('0', zfill);
+  for (int i = 0; i < dlen; i++) out.push(dgt[i]);
+  out.push_n(fill, rpad);
+}
+
+// write_float with runtime spec and etype — writes directly to out (no content buffer)
+template <typename T>
+inline void write_float_rt(fmt_buf &out, T arg, const format_spec &spec, char etype,
+                           int dyn_w, int dyn_p) {
+  if (etype == 'a' || etype == 'A') {
     fmt_buf content;
-    hex_float_to_buf<Spec, EffType>(content, arg);
-    apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+    hex_float_to_buf_rt(content, arg, spec, etype == 'A');
+    apply_padding_data(out, content.data, content.len, spec.fill_or(), spec.align_or(), dyn_w);
     return;
   }
 
-  constexpr bool upper = (EffType == 'F' || EffType == 'E' || EffType == 'G');
+  bool upper = (etype == 'F' || etype == 'E' || etype == 'G');
   double val = static_cast<double>(arg);
-  int prec = dyn_p >= 0 ? dyn_p : (Spec.precision >= 0 ? Spec.precision : 6);
+  int prec = dyn_p >= 0 ? dyn_p : (spec.precision >= 0 ? spec.precision : 6);
 
-  // Extract sign from bits (handles -0.0)
   uint64_t bits = __builtin_bit_cast(uint64_t, val);
   bool neg = (bits >> 63) != 0;
-  if (neg)
-    val = -val;
-  char sign_ch = neg ? '-' : (Spec.sign == '+') ? '+' : (Spec.sign == ' ') ? ' ' : '\0';
+  if (neg) val = -val;
+  char sign_ch = neg ? '-' : (spec.sign == '+') ? '+' : (spec.sign == ' ') ? ' ' : '\0';
 
-  // Build the numeric part (without sign)
   fmt_buf digits;
   int biased_exp = static_cast<int>((bits >> 52) & 0x7FF);
-  if (biased_exp == 0x7FF) { // inf or nan
+  if (biased_exp == 0x7FF) {
     uint64_t mant = bits & 0x000FFFFFFFFFFFFFULL;
     digits.push_str(mant == 0 ? (upper ? "INF" : "inf") : (upper ? "NAN" : "nan"));
-  } else if (EffType == 'f' || EffType == 'F') {
-    fmt_fixed(digits, val, prec, Spec.alt);
-  } else if (EffType == 'e' || EffType == 'E') {
-    fmt_sci(digits, val, prec, upper, Spec.alt);
-  } else if (EffType == 'g' || EffType == 'G') {
-    fmt_g(digits, val, prec, upper, Spec.alt);
+  } else if (etype == 'f' || etype == 'F') {
+    fmt_fixed(digits, val, prec, spec.alt);
+  } else if (etype == 'e' || etype == 'E') {
+    fmt_sci(digits, val, prec, upper, spec.alt);
+  } else if (etype == 'g' || etype == 'G') {
+    fmt_g(digits, val, prec, upper, spec.alt);
   }
 
-  // Assemble: sign + optional zero-fill + digits
   int content_w = (sign_ch ? 1 : 0) + digits.len;
-  bool zpad = Spec.zero_pad && !Spec.fill && !Spec.align;
+  bool zpad = spec.zero_pad && !spec.fill && !spec.align;
+  int zfill = (zpad && dyn_w > content_w) ? dyn_w - content_w : 0;
+  int total = content_w + zfill;
 
-  fmt_buf content;
-  if (sign_ch)
-    content.push(sign_ch);
-  if (zpad && dyn_w > content_w)
-    content.push_n('0', dyn_w - content_w);
-  append_buf(content, digits);
+  char fill = spec.fill_or();
+  char align = spec.align_or();
+  int pad = dyn_w > total ? dyn_w - total : 0;
+  int lpad = (align == '>') ? pad : (align == '^') ? pad / 2 : 0;
+  int rpad = pad - lpad;
 
-  apply_padding(out, content, Spec.fill_or(), Spec.align_or(), dyn_w);
+  out.push_n(fill, lpad);
+  if (sign_ch) out.push(sign_ch);
+  out.push_n('0', zfill);
+  for (int i = 0; i < digits.len; i++) out.push(digits.data[i]);
+  out.push_n(fill, rpad);
 }
 
-// ── Dispatch with spec ────────────────────────────────────────────────────────
-
-// Format one argument with an explicit format spec into out.
-template <format_spec Spec, bool Dynamic = false, typename T>
-inline void write_arg_with_spec(fmt_buf &out, T arg, int dyn_w = Spec.width,
-                                int dyn_p = Spec.precision) {
+// Format one argument with runtime spec — dispatches based on type + etype.
+// No fmt_buf temporaries for bool/char/string; writes directly to out.
+template <typename T>
+inline void write_arg_rt(fmt_buf &out, T arg, const format_spec &spec, int dyn_w, int dyn_p) {
   using U = std::decay_t<T>;
 
-  // bool default/s → "true"/"false" with padding (default left-align like strings)
-  if constexpr (std::same_as<U, bool> && (Spec.type == '\0' || Spec.type == 's')) {
-    fmt_buf content;
-    push_bool(content, arg);
-    apply_padding(out, content, Spec.fill_or(), Spec.align_or('<'), dyn_w);
-    return;
+  if constexpr (std::same_as<U, bool>) {
+    if (spec.type == '\0' || spec.type == 's') {
+      const char *bs = arg ? "true" : "false";
+      int blen = arg ? 4 : 5;
+      apply_padding_data(out, bs, blen, spec.fill_or(), spec.align_or('<'), dyn_w);
+      return;
+    }
   }
 
-  constexpr char etype = effective_type<U, Spec.type>();
+  char etype = effective_type_rt<U>(spec.type);
 
-  if constexpr (is_int_format(etype)) {
-    write_int<Spec, etype>(out, arg, dyn_w);
-  } else if constexpr (etype == 'c') {
-    fmt_buf content;
-    content.push(static_cast<char>(arg));
-    apply_padding(out, content, Spec.fill_or(), Spec.align_or('<'), dyn_w);
-  } else if constexpr (etype == 's') {
-    fmt_buf content;
-    const char *s = printf_cast<'s'>(arg);
-    if (dyn_p >= 0) {
-      for (int k = 0; k < dyn_p && s[k]; k++)
-        content.push(s[k]);
-    } else {
-      content.push_str(s);
+  if (is_int_format(etype)) {
+    if constexpr (std::integral<U>) write_int_rt(out, arg, spec, etype, dyn_w);
+  } else if (etype == 'c') {
+    if constexpr (std::integral<U>) {
+      char ch = static_cast<char>(arg);
+      apply_padding_data(out, &ch, 1, spec.fill_or(), spec.align_or('<'), dyn_w);
     }
-    apply_padding(out, content, Spec.fill_or(), Spec.align_or('<'), dyn_w);
-  } else if constexpr (is_float_format(etype)) {
-    write_float<Spec, etype>(out, arg, dyn_w, dyn_p);
+  } else if (etype == 's') {
+    if constexpr (std::same_as<U, bool>) {
+      const char *bs = arg ? "true" : "false";
+      int blen = arg ? 4 : 5;
+      apply_padding_data(out, bs, blen, spec.fill_or(), spec.align_or('<'), dyn_w);
+    } else if constexpr (std::is_pointer_v<U>) {
+      using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
+      if constexpr (std::same_as<Pointee, char>) {
+        const char *s = arg;
+        int slen = 0;
+        if (dyn_p >= 0) { for (; slen < dyn_p && s[slen]; slen++); }
+        else { while (s[slen]) slen++; }
+        apply_padding_data(out, s, slen, spec.fill_or(), spec.align_or('<'), dyn_w);
+      }
+    }
+  } else if (is_float_format(etype)) {
+    if constexpr (std::floating_point<U>) write_float_rt(out, arg, spec, etype, dyn_w, dyn_p);
   } else {
     write(out, "<?>");
   }
 }
 
-template <fixed_string Fmt, placeholder_info Info, size_t AutoIdx, typename... Args>
-inline void write_one_arg(fmt_buf &out, const std::tuple<Args...> &all_args) {
-  constexpr size_t idx = Info.index >= 0 ? static_cast<size_t>(Info.index) : 0;
-  auto arg = std::get<idx>(all_args);
-  if constexpr (Info.has_spec && Info.close > Info.spec_beg) {
-    constexpr int dyn_start = static_cast<int>(AutoIdx) + 1;
-    constexpr auto spec = parse_spec<Fmt, Info.spec_beg, Info.close, dyn_start>();
-    if constexpr (spec.width_arg >= 0 || spec.prec_arg >= 0) {
-      int dyn_w = spec.width;
-      int dyn_p = spec.precision;
-      if constexpr (spec.width_arg >= 0) {
-        constexpr size_t wi = static_cast<size_t>(spec.width_arg);
-        dyn_w = static_cast<int>(std::get<wi>(all_args));
-      }
-      if constexpr (spec.prec_arg >= 0) {
-        constexpr size_t pi = static_cast<size_t>(spec.prec_arg);
-        dyn_p = static_cast<int>(std::get<pi>(all_args));
-      }
-      write_arg_with_spec<spec, true>(out, arg, dyn_w, dyn_p);
-    } else {
-      write_arg_with_spec<spec>(out, arg);
-    }
-  } else {
-    write_arg_default(out, arg);
+// ============================================================
+// Runtime tuple dispatch + format loop
+// ============================================================
+
+template <typename Tuple, typename F, size_t... Is>
+inline void dispatch_by_index(const Tuple &t, int idx, F &&fn, std::index_sequence<Is...>) {
+  ((static_cast<int>(Is) == idx ? (fn(std::get<Is>(t)), void()) : void()), ...);
+}
+
+template <typename... Args>
+inline void resolve_int_arg(const std::tuple<Args...> &all_args, int idx, int &out) {
+  dispatch_by_index(all_args, idx,
+    [&out](auto val) {
+      if constexpr (std::integral<std::decay_t<decltype(val)>>)
+        out = static_cast<int>(val);
+    }, std::index_sequence_for<Args...>{});
+}
+
+template <typename... Args>
+inline void dispatch_arg(fmt_buf &out, const std::tuple<Args...> &all_args,
+                         int idx, bool has_spec, const format_spec &spec, int dyn_w, int dyn_p) {
+  dispatch_by_index(all_args, idx,
+    [&](auto arg) {
+      if (has_spec) write_arg_rt(out, arg, spec, dyn_w, dyn_p);
+      else write_arg_default(out, arg);
+    }, std::index_sequence_for<Args...>{});
+}
+
+inline void write_literal_segment(fmt_buf &out, const char *str, int from, int to) {
+  for (int i = from; i < to;) {
+    if (i + 1 < to && str[i] == '{' && str[i + 1] == '{') { out.push('{'); i += 2; }
+    else if (i + 1 < to && str[i] == '}' && str[i + 1] == '}') { out.push('}'); i += 2; }
+    else out.push(str[i++]);
   }
 }
 
-template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
-inline void format(fmt_buf &out, const std::tuple<Args...> &all_args) {
-  constexpr auto info = find_placeholder<Fmt, Pos>();
-  if constexpr (!info.found) {
-    constexpr size_t end = flen(Fmt);
-    // EscapePercent=false: % is left as-is here; the runtime loop in print()
-    // will escape all % (from literals and arg values) before calling printf.
-    constexpr size_t sz = literal_out_size<Fmt, Pos, end, false>();
-    if constexpr (sz > 0) {
-      constexpr auto lit = make_literal<Fmt, Pos, end, false>();
-      write_literal<lit>(out);
-    }
-  } else {
-    constexpr size_t prefix_sz = literal_out_size<Fmt, Pos, info.open, false>();
-    if constexpr (prefix_sz > 0) {
-      constexpr auto prefix = make_literal<Fmt, Pos, info.open, false>();
-      write_literal<prefix>(out);
-    }
-    constexpr bool is_auto = (info.index < 0);
-    constexpr auto resolved = placeholder_info{
-        info.open,     info.close, info.spec_beg,
-        info.has_spec, info.found, is_auto ? static_cast<int>(AutoIdx) : info.index};
-    write_one_arg<Fmt, resolved, AutoIdx>(out, all_args);
+template <sycl_printable... Args>
+inline void format_rt(fmt_buf &out, const print_string<Args...> &ps,
+                      const std::tuple<Args...> &all_args) {
+  int pos = 0;
+  for (int i = 0; i < ps.ph_count; i++) {
+    const auto &e = ps.phs[i];
+    write_literal_segment(out, ps.str, pos, e.open);
+    int dyn_w = e.spec.width, dyn_p = e.spec.precision;
+    if (e.spec.width_arg >= 0) resolve_int_arg(all_args, e.spec.width_arg, dyn_w);
+    if (e.spec.prec_arg >= 0)  resolve_int_arg(all_args, e.spec.prec_arg, dyn_p);
+    dispatch_arg(out, all_args, e.arg_idx, e.has_spec, e.spec, dyn_w, dyn_p);
+    pos = e.close + 1;
+  }
+  write_literal_segment(out, ps.str, pos, ps.len);
+}
 
-    constexpr int dyn_start = static_cast<int>(AutoIdx) + 1;
-    constexpr int dyn_used = (info.has_spec && info.close > info.spec_beg)
-                                 ? parse_spec<Fmt, info.spec_beg, info.close, dyn_start>().dyn_count
-                                 : 0;
-    constexpr size_t next_auto = is_auto ? AutoIdx + 1 + static_cast<size_t>(dyn_used) : AutoIdx;
-    format<Fmt, info.close + 1, next_auto>(out, all_args);
+// Flush buf: escape % → %% then output.
+// ACPP SSCP __acpp_sscp_print has different backends:
+//   PTX/CUDA: calls vprintf(msg, nullptr) — interprets % as format specifiers
+//   Host/CPU: calls fputs(msg, stdout) — prints verbatim
+// __acpp_sscp_is_host is false for BOTH backends in SSCP kernels, so we
+// cannot distinguish at runtime. We escape % → %% here, which is correct
+// for CUDA (vprintf renders %% as %). This breaks CPU SSCP (fputs prints
+// %% literally), but we favor GPU correctness.
+inline void flush_buf(fmt_buf &out) {
+  if (__acpp_sscp_is_host) {
+    out.data[out.len] = '\0';
+    fputs(out.data, stdout);
+  } else {
+    int pct = 0;
+    for (int i = 0; i < out.len; i++)
+      if (out.data[i] == '%') pct++;
+    if (pct > 0) {
+      int newlen = out.len + pct;
+      if (newlen > (int)fmt_buf::cap) newlen = fmt_buf::cap;
+      for (int src = out.len - 1, dst = newlen - 1; src >= 0 && dst >= 0; src--) {
+        out.data[dst--] = out.data[src];
+        if (out.data[src] == '%' && dst >= 0) out.data[dst--] = '%';
+      }
+      out.len = newlen;
+    }
+    out.data[out.len] = '\0';
+    __acpp_sscp_print(out.data);
   }
 }
+
 } // namespace buffer_path
 #endif // FMT_SYCL_ACPP
 
@@ -1782,40 +1945,10 @@ inline void format(fmt_buf &out, const std::tuple<Args...> &all_args) {
 // Public API
 // ============================================================
 
+#if !FMT_SYCL_ACPP
+
 template <print_detail::fixed_string Fmt, print_detail::sycl_printable... Args>
 inline void print(Args... args) {
-#if FMT_SYCL_ACPP
-  print_detail::fmt_buf out;
-  print_detail::buffer_path::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
-  if (__acpp_sscp_is_host) {
-    out.data[out.len] = '\0';
-    fputs(out.data, stdout);
-  } else {
-    // ACPP SSCP __acpp_sscp_print has different backends:
-    //   PTX/CUDA: calls vprintf(msg, nullptr) — interprets % as format specifiers
-    //   Host/CPU: calls fputs(msg, stdout) — prints verbatim
-    // __acpp_sscp_is_host is false for BOTH backends in SSCP kernels, so we
-    // cannot distinguish at runtime. We escape % → %% here, which is correct
-    // for CUDA (vprintf renders %% as %). This breaks CPU SSCP (fputs prints
-    // %% literally), but we favor GPU correctness.
-    int pct = 0;
-    for (int i = 0; i < out.len; i++)
-      if (out.data[i] == '%') pct++;
-    if (pct > 0) {
-      int newlen = out.len + pct;
-      if (newlen > (int)print_detail::fmt_buf::cap)
-        newlen = print_detail::fmt_buf::cap;
-      for (int src = out.len - 1, dst = newlen - 1; src >= 0 && dst >= 0; src--) {
-        out.data[dst--] = out.data[src];
-        if (out.data[src] == '%' && dst >= 0)
-          out.data[dst--] = '%';
-      }
-      out.len = newlen;
-    }
-    out.data[out.len] = '\0';
-    __acpp_sscp_print(out.data);
-  }
-#else
   if constexpr (sizeof...(Args) == 0) {
     // No args — just emit the literal
     constexpr size_t end = print_detail::flen(Fmt);
@@ -1832,7 +1965,6 @@ inline void print(Args... args) {
                   "These features are only available on ACPP.");
     print_detail::specifiers_path::print_combined_dispatch<Fmt>(args...);
   }
-#endif
 }
 
 namespace print_detail {
@@ -1852,6 +1984,25 @@ inline void println(Args... args) {
   print<print_detail::append_newline<Fmt>()>(args...);
 }
 
+#else // FMT_SYCL_ACPP
+
+template <print_detail::sycl_printable... Args>
+inline void print(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
+  print_detail::fmt_buf out;
+  print_detail::buffer_path::format_rt(out, ps, std::tuple<Args...>(args...));
+  print_detail::buffer_path::flush_buf(out);
+}
+
+template <print_detail::sycl_printable... Args>
+inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
+  print_detail::fmt_buf out;
+  print_detail::buffer_path::format_rt(out, ps, std::tuple<Args...>(args...));
+  out.push('\n');
+  print_detail::buffer_path::flush_buf(out);
+}
+
+#endif // FMT_SYCL_ACPP
+
 } // namespace khr
 #if !FMT_SYCL_ACPP
 } // namespace _V1
@@ -1859,5 +2010,10 @@ inline void println(Args... args) {
 } // namespace sycl
 
 // Convenience macro — nicer syntax without explicit template angle brackets
+#if FMT_SYCL_ACPP
+#define KHR_PRINT(fmtstr, ...) ::sycl::khr::print(fmtstr __VA_OPT__(,) __VA_ARGS__)
+#define KHR_PRINTLN(fmtstr, ...) ::sycl::khr::println(fmtstr __VA_OPT__(,) __VA_ARGS__)
+#else
 #define KHR_PRINT(fmtstr, ...) ::sycl::khr::print<fmtstr>(__VA_ARGS__)
 #define KHR_PRINTLN(fmtstr, ...) ::sycl::khr::println<fmtstr>(__VA_ARGS__)
+#endif

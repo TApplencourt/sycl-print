@@ -22,8 +22,8 @@ bool CONCAT(test_, TEST_NAME)(::sycl::queue& q) {
   _test_id = 0;
 
   auto sycl_out = capture_stdout([&]() {
-#define PRINT(fmt_str, ...) ::sycl::khr::print<fmt_str>(__VA_ARGS__)
-#define PRINTLN(fmt_str, ...) ::sycl::khr::println<fmt_str>(__VA_ARGS__)
+#define PRINT(fmt_str, ...) KHR_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
+#define PRINTLN(fmt_str, ...) KHR_PRINTLN(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define RUN(...) do { printf("Test %d\n", ++_test_id); \
   q.parallel_for(N, [=](::sycl::id<1>) { __VA_ARGS__; }).wait(); } while (0)
 #include TEST_INC
