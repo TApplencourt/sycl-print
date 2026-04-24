@@ -17,11 +17,11 @@ endif
 
 # ── Source files ────────────────────────────────────────────
 TEST_DIR    := test
-TEST_SRCS   := test_main test_integers test_floats test_strings test_layout test_misc
+TEST_NAMES  := integers floats strings layout misc
 TEST_HDRS   := $(wildcard $(TEST_DIR)/*.hpp $(TEST_DIR)/*.inc)
 
 # Derived binary names (all in build/)
-TEST_BINS := $(addprefix build/test_,$(OPT_LEVELS))
+TEST_BINS := $(foreach t,$(TEST_NAMES),$(foreach o,$(OPT_LEVELS),build/test_$(t)_$(o)))
 FUZZ_BINS := $(addprefix build/fuzz_,$(OPT_LEVELS))
 FUZZ_FM   := $(addprefix build/fuzz_ffast_,$(OPT_LEVELS))
 
@@ -37,20 +37,15 @@ all: test
 build/:
 	mkdir -p build
 
-# ── Test binaries (single binary per opt level) ─────────────
+# ── Test binaries (one binary per test × opt level) ─────────
 
 define TEST_template
-$(foreach s,$(TEST_SRCS),$(eval \
-build/$(s)_$(1).o: $(TEST_DIR)/$(s).cpp $(TEST_HDRS) sycl_khr_print.hpp | build/; \
-	@TIMEFORMAT="  compile $(s)_$(1).o: %Rs"; time \
-	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) -$(1) $$(BUFFER_PATH) $$(WA_$(1)) -c $$< -o $$@))
-
-build/test_$(1): $(foreach s,$(TEST_SRCS),build/$(s)_$(1).o)
-	@TIMEFORMAT="  link test_$(1): %Rs"; time \
-	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) $$^ -o $$@
+build/test_$(1)_$(2): $(TEST_DIR)/test_$(1).cpp $(TEST_HDRS) sycl_khr_print.hpp | build/
+	@TIMEFORMAT="  compile test_$(1)_$(2): %Rs"; time \
+	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) -$(2) $$(BUFFER_PATH) $$(WA_$(2)) $$< -o $$@
 endef
 
-$(foreach o,$(OPT_LEVELS),$(eval $(call TEST_template,$(o))))
+$(foreach t,$(TEST_NAMES),$(foreach o,$(OPT_LEVELS),$(eval $(call TEST_template,$(t),$(o)))))
 
 # ── Fuzz targets (single binary per opt level) ──────────────
 
@@ -85,12 +80,14 @@ test: test-format test-fuzz test-ffast readme-examples
 
 test-format: $(TEST_BINS)
 	@fail=0; \
-	for opt in $(OPT_LEVELS); do \
-	  t0=$$(date +%s%N); \
-	  ./build/test_$$opt; rc=$$?; \
-	  ms=$$(( ($$(date +%s%N) - t0) / 1000000 )); \
-	  if [ $$rc -eq 0 ]; then echo "test -$$opt: PASS ($${ms}ms)"; \
-	  else echo "test -$$opt: FAIL ($${ms}ms)"; fail=1; fi; \
+	for t in $(TEST_NAMES); do \
+	  for opt in $(OPT_LEVELS); do \
+	    t0=$$(date +%s%N); \
+	    ./build/test_$${t}_$$opt; rc=$$?; \
+	    ms=$$(( ($$(date +%s%N) - t0) / 1000000 )); \
+	    if [ $$rc -eq 0 ]; then echo "test_$$t -$$opt: PASS ($${ms}ms)"; \
+	    else echo "test_$$t -$$opt: FAIL ($${ms}ms)"; fail=1; fi; \
+	  done; \
 	done; \
 	exit $$fail
 

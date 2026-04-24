@@ -34,3 +34,8 @@ bool CONCAT(test_, TEST_NAME)(::sycl::queue& q) {
 
   return diff_output(TEST_INC, std_out, sycl_out);
 }
+
+int main() {
+  ::sycl::queue q;
+  return CONCAT(test_, TEST_NAME)(q) ? 0 : 1;
+}
