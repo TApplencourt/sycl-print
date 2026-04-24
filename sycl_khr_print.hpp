@@ -1788,11 +1788,13 @@ inline void format(fmt_buf &out, const std::tuple<Args...> &all_args) {
 template <print_detail::fixed_string Fmt, print_detail::sycl_printable... Args>
 inline void print(Args... args) {
 #if FMT_SYCL_ACPP
-  // Accumulate everything into one buffer, then one sycl::detail::print call.
   print_detail::fmt_buf out;
   print_detail::buffer_path::format<Fmt, 0, 0>(out, std::tuple<Args...>(args...));
   out.data[out.len] = '\0';
-  ::sycl::detail::print(out.data);
+  if (__acpp_sscp_is_host)
+    printf("%s", out.data);
+  else
+    __acpp_sscp_print(out.data);
 #else
   if constexpr (sizeof...(Args) == 0) {
     // No args — just emit the literal
