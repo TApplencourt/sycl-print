@@ -80,5 +80,31 @@ RUN(PRINT("{:.2f}\n", 3.14f));
 RUN(PRINT("{:+.4e}\n", 0.001f));
 RUN(PRINT("{:012.3f}\n", 42.0f));
 
+// Float extremes with explicit specs (float 32-bit)
+RUN(PRINT("{:g}\n", std::numeric_limits<float>::max()));
+RUN(PRINT("{:e}\n", std::numeric_limits<float>::max()));
+RUN(PRINT("{:g}\n", -std::numeric_limits<float>::max()));
+RUN(PRINT("{:g}\n", std::numeric_limits<float>::min()));   // smallest normal
+RUN(PRINT("{:e}\n", std::numeric_limits<float>::min()));
+RUN(PRINT("{:g}\n", std::numeric_limits<float>::denorm_min()));
+
+// Negative zero
+RUN(PRINT("{:f}\n", -0.0f));
+RUN(PRINT("{:e}\n", -0.0f));
+RUN(PRINT("{:g}\n", -0.0f));
+RUN(PRINT("{:g}\n", -0.0));
+RUN(PRINT("{:e}\n", -0.0));
+
+// NaN (quiet)
+RUN(PRINT("{:f}\n", std::numeric_limits<float>::quiet_NaN()));
+RUN(PRINT("{:g}\n", std::numeric_limits<float>::quiet_NaN()));
+RUN(PRINT("{:F}\n", std::numeric_limits<float>::quiet_NaN()));
+RUN(PRINT("{:f}\n", std::numeric_limits<double>::quiet_NaN()));
+
+// Negative inf (float)
+RUN(PRINT("{:f}\n", -1.0f / 0.0f));
+RUN(PRINT("{:g}\n", -1.0f / 0.0f));
+RUN(PRINT("{:F}\n", -1.0f / 0.0f));
+
 
 #endif

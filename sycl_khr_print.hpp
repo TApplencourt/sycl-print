@@ -1375,10 +1375,16 @@ template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
       out.push('-');
       val = -val;
     }
-    char dbuf[24];
-    int dlen = dragonbox::format_shortest(dbuf, val);
-    for (int k = 0; k < dlen; k++)
-      out.push(dbuf[k]);
+    if (__builtin_isinf(val)) {
+      write(out, "inf");
+    } else if (__builtin_isnan(val)) {
+      write(out, "nan");
+    } else {
+      char dbuf[24];
+      int dlen = dragonbox::format_shortest(dbuf, val);
+      for (int k = 0; k < dlen; k++)
+        out.push(dbuf[k]);
+    }
   } else if constexpr (std::is_pointer_v<U>) {
     using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
     if constexpr (std::same_as<Pointee, char>)

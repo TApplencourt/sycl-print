@@ -31,5 +31,16 @@ RUN(PRINT("{:<010d}\n", 42));
 RUN(PRINT("{:<010d}\n", -42));
 RUN(PRINT("{:010e}\n", -1.23));
 
+// Sign + zero-pad (positive and negative)
+RUN(PRINT("{:+010d}\n", 42));
+RUN(PRINT("{:+010d}\n", -42));
+RUN(PRINT("{: 010d}\n", 42));
+RUN(PRINT("{: 010d}\n", -42));
+RUN(PRINT("{:+010f}\n", 3.14));
+RUN(PRINT("{:+010f}\n", -3.14));
+RUN(PRINT("{: 010f}\n", 3.14));
+RUN(PRINT("{:+08.2f}\n", 3.14));
+RUN(PRINT("{:+08.2f}\n", -3.14));
+
 
 #endif
