@@ -1066,7 +1066,7 @@ struct print_string {
   template <size_t N>
   consteval print_string(const char (&s)[N]) : len(static_cast<int>(N - 1)) {
     static_assert(N <= MAX_LEN, "format string too long");
-    for (size_t i = 0; i < N; i++) str[i] = s[i];
+    std::copy_n(s, N, str);
     int pos = 0, auto_idx = 0;
     constexpr int n_args = static_cast<int>(sizeof...(Args));
     while (true) {
@@ -1140,8 +1140,8 @@ using small_buf = static_buf<48>;
 
 // Write an unsigned integer in any base into raw (data, len, cap) right-to-left.
 template <int Base, bool Upper = false, typename U>
+  requires (Base == 2 || Base == 8 || Base == 10 || Base == 16)
 inline void write_uint_raw(char *data, int &len, int cap, U val) {
-  static_assert(Base == 2 || Base == 8 || Base == 10 || Base == 16);
   if (val == 0) { if (len < cap) data[len++] = '0'; return; }
   int n = 0;
   for (U t = val; t > 0; t /= U(Base)) n++;
@@ -1241,9 +1241,9 @@ struct printf_fmt_buf {
 };
 
 // Build the printf format string: %[flags][width][.precision][length]type
-template <format_spec Spec, char EffType, bool Is64> consteval printf_fmt_buf build_printf_fmt() {
-  static_assert(is_type_char(EffType) || EffType == 'u',
-                "build_printf_fmt: EffType must be a valid format type character");
+template <format_spec Spec, char EffType, bool Is64>
+  requires (is_type_char(EffType) || EffType == 'u')
+consteval printf_fmt_buf build_printf_fmt() {
   printf_fmt_buf buf;
   buf.push('%');
 
