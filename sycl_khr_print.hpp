@@ -1208,8 +1208,20 @@ template <char EffType, typename T> inline auto printf_cast(T arg) {
     return signed_int_cast(arg);
   } else if constexpr (EffType == 'u' || EffType == 'x' || EffType == 'X' || EffType == 'o') {
     return unsigned_int_cast(arg);
-  } else if constexpr (is_float_format(EffType))
+  } else if constexpr (is_float_format(EffType)) {
+#ifdef __OPTIMIZE__
+    // At O1+, the host runtime enables DAZ/FTZ, so std::format treats float
+    // subnormals as zero.  Match that on the device: without this, the float
+    // is promoted to double (where the value is normal) and printf outputs a
+    // non-zero result that disagrees with the host reference.
+    if constexpr (std::same_as<U, float>) {
+      auto bits = __builtin_bit_cast(uint32_t, arg);
+      if ((bits & 0x7F800000u) == 0 && (bits & 0x007FFFFFu) != 0)
+        return (bits & 0x80000000u) ? -0.0 : 0.0;
+    }
+#endif
     return static_cast<double>(arg);
+  }
   else
     return arg;
 }
