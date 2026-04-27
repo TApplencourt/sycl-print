@@ -82,7 +82,7 @@ for (int _i = 0; _i < N_ITER; _i++) {
   RUN(P("{:.2e} {} {:x} {} {}\n", d, i, u, c, b));
 }
 
-#ifdef FMT_SYCL_ACPP
+#if FMT_SYCL_ACPP
 for (int _i = 0; _i < N_ITER; _i++) {
   int a = rand_int();
   double b = rand_double();

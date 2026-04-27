@@ -107,14 +107,17 @@ FUZZ_DBL("{:020.4f}\n")
 
 FUZZ_CHAR("{:d}\n")
 
+#ifndef FMT_SYCL_WA_STR
 for (int _i = 0; _i < N_ITER; _i++) {
   bool v = (rng() & 1) != 0;
   RUN(P("{}\n", v));
 }
+#endif
 for (int _i = 0; _i < N_ITER; _i++) {
   bool v = (rng() & 1) != 0;
   RUN(P("{:d}\n", v));
 }
+#ifndef FMT_SYCL_WA_STR
 for (int _i = 0; _i < N_ITER; _i++) {
   bool v = (rng() & 1) != 0;
   RUN(P("{:>10}\n", v));
@@ -123,6 +126,7 @@ for (int _i = 0; _i < N_ITER; _i++) {
   bool v = (rng() & 1) != 0;
   RUN(P("{:s}\n", v));
 }
+#endif
 
 RUN(P("{:f}\n", 1.0 / 0.0));
 RUN(P("{:f}\n", -1.0 / 0.0));
@@ -145,12 +149,14 @@ for (int _i = 0; _i < N_ITER; _i++) {
   RUN(P("Hello {}, coucou {}\n", "world", _v));
 }
 #endif
+#ifndef FMT_SYCL_WA_STR
 for (int _i = 0; _i < N_ITER; _i++) {
   bool b1 = (rng() & 1) != 0;
   bool b2 = (rng() & 1) != 0;
   int i = rand_int();
   RUN(P("{} and {} => {:d}\n", b1, b2, i));
 }
+#endif
 
 for (int _i = 0; _i < N_ITER; _i++) {
   int v = rand_int();
@@ -162,7 +168,7 @@ for (int _i = 0; _i < N_ITER; _i++) {
   RUN(P("result={{{}}} value={{{:+.2f}}}\n", i, d));
 }
 
-#ifdef FMT_SYCL_ACPP
+#if FMT_SYCL_ACPP
 FUZZ_INT("{:x}\n", rand_int)
 FUZZ_INT("{:X}\n", rand_int)
 FUZZ_INT("{:o}\n", rand_int)
