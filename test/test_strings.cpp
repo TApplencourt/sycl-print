@@ -1,7 +1,7 @@
 #ifndef TEST_INC
 #define TEST_NAME strings
 #define TEST_INC "test_strings.cpp"
-#include "test_body.inc"
+#include "test_select_body.inc"
 #else
 
 // Char
@@ -41,7 +41,7 @@ RUN(PRINT("{:>10c}\n", 'C'));
 RUN(PRINT("{}\n", "hello world"));
 {
   const char *env = "cpu-char-* copied";
-#ifdef FMT_STD_PATH
+#if defined(FMT_STD_PATH) || defined(FMT_SYCL_HOST) || defined(FMT_SYCL_HOST_ACPP)
   RUN(PRINT("{}\n", env));
 #else
   size_t len = std::strlen(env) + 1;

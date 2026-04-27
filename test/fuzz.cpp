@@ -42,6 +42,34 @@ static char rand_char() { return static_cast<char>(33 + rng() % 94); }
 #define FUZZ_CHAR(spec) \
   for (int _i = 0; _i < N_ITER; _i++) { auto _v = rand_char(); RUN(P(spec, _v)); }
 
+#if defined(FMT_SYCL_HOST) || defined(FMT_SYCL_HOST_ACPP)
+bool test_fuzz() {
+  rng_state = SEED;
+  auto std_out = capture_stdout([&]() {
+#define FMT_STD_PATH
+#define P(fmt_str, ...) std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)
+#define RUN(...) for (int _r = 0; _r < N; _r++) { __VA_ARGS__; }
+#include FUZZ_BODY
+#undef RUN
+#undef P
+#undef FMT_STD_PATH
+  });
+
+  rng_state = SEED;
+  auto sycl_out = capture_stdout([&]() {
+#define P(fmt_str, ...) KHR_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
+#define RUN(...) for (int _r = 0; _r < N; _r++) { __VA_ARGS__; }
+#include FUZZ_BODY
+#undef RUN
+#undef P
+  });
+
+  return diff_output("fuzz.cpp", std_out, sycl_out);
+}
+#ifndef TEST_NO_MAIN
+int main() { return test_fuzz() ? 0 : 1; }
+#endif
+#else
 int main() {
   ::sycl::queue q;
 
@@ -67,6 +95,7 @@ int main() {
 
   return diff_output("fuzz.cpp", std_out, sycl_out) ? 0 : 1;
 }
+#endif
 
 #else
 
@@ -175,6 +204,9 @@ FUZZ_INT("{:o}\n", rand_int)
 FUZZ_INT("{:b}\n", rand_int)
 FUZZ_INT("{:B}\n", rand_int)
 FUZZ_UINT("{:b}\n", rand_u64)
+FUZZ_UINT("{:x}\n", rand_u64)
+FUZZ_UINT("{:X}\n", rand_u64)
+FUZZ_UINT("{:o}\n", rand_u64)
 FUZZ_INT("{:#x}\n", rand_int)
 FUZZ_INT("{:#X}\n", rand_int)
 FUZZ_INT("{:#o}\n", rand_int)
@@ -212,6 +244,40 @@ for (int _i = 0; _i < N_ITER; _i++) {
   int v = rand_int();
   RUN(P("hex={:#010x} bin={:#020b} dec={:+d}\n", v, v, v));
 }
+
+// Bool with width/alignment (covers ACPP bool padding path)
+for (int _i = 0; _i < N_ITER; _i++) {
+  bool v = (rng() & 1) != 0;
+  RUN(P("{:>10s}\n", v));
+}
+for (int _i = 0; _i < N_ITER; _i++) {
+  bool v = (rng() & 1) != 0;
+  RUN(P("{:<10s}\n", v));
+}
+for (int _i = 0; _i < N_ITER; _i++) {
+  bool v = (rng() & 1) != 0;
+  RUN(P("{:^10s}\n", v));
+}
+
+// Dynamic width (covers resolve_int_arg path)
+for (int _i = 0; _i < N_ITER; _i++) {
+  int v = rand_int();
+  int w = 5 + static_cast<int>(rng() % 20);
+  RUN(P("{:{}d}\n", v, w));
+}
+for (int _i = 0; _i < N_ITER; _i++) {
+  double v = rand_double();
+  int w = 10 + static_cast<int>(rng() % 15);
+  RUN(P("{:{}.4f}\n", v, w));
+}
+
+// Dynamic precision
+for (int _i = 0; _i < N_ITER; _i++) {
+  double v = rand_double();
+  int p = static_cast<int>(rng() % 10);
+  RUN(P("{:.{}f}\n", v, p));
+}
+
 #endif
 
 #endif

@@ -1,7 +1,7 @@
 #ifndef TEST_INC
 #define TEST_NAME layout
 #define TEST_INC "test_layout.cpp"
-#include "test_body.inc"
+#include "test_select_body.inc"
 #else
 
 // Width and alignment

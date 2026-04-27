@@ -1,7 +1,7 @@
 #ifndef TEST_INC
 #define TEST_NAME misc
 #define TEST_INC "test_misc.cpp"
-#include "test_body.inc"
+#include "test_select_body.inc"
 #else
 
 // Combined specs

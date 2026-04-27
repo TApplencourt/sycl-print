@@ -13,7 +13,9 @@
 #include <unistd.h>
 
 #include "../sycl_khr_print.hpp"
+#if !defined(FMT_SYCL_HOST) && !defined(FMT_SYCL_HOST_ACPP)
 #include <sycl/sycl.hpp>
+#endif
 
 constexpr int N = 2;
 

@@ -9,8 +9,14 @@
 
 #pragma once
 
-// Backend detection: DPC++ vs AdaptiveCpp
-#if defined(__ADAPTIVECPP__) || defined(__HIPSYCL__) || defined(__ACPP__)
+// Backend detection: DPC++ vs AdaptiveCpp vs host-only (coverage)
+#if defined(FMT_SYCL_HOST_ACPP)
+#define FMT_SYCL_ACPP 1
+#include <cstdio>
+#elif defined(FMT_SYCL_HOST)
+#define FMT_SYCL_ACPP 0
+#include <cstdio>
+#elif defined(__ADAPTIVECPP__) || defined(__HIPSYCL__) || defined(__ACPP__)
 #define FMT_SYCL_ACPP 1
 #include <sycl/sycl.hpp>
 #else
@@ -29,7 +35,7 @@
 
 
 namespace sycl {
-#if !FMT_SYCL_ACPP
+#if !FMT_SYCL_ACPP && !defined(FMT_SYCL_HOST)
 inline namespace _V1 {
 #endif
 namespace khr {
@@ -1208,7 +1214,11 @@ namespace specifiers_path {
 template <fixed_string Lit, size_t... Is>
 inline void emit_literal_impl(std::index_sequence<Is...>) {
   static constexpr char s[] = {Lit.data[Is]..., '\0'};
+#ifdef FMT_SYCL_HOST
+  ::printf("%s", s);
+#else
   ::sycl::ext::oneapi::experimental::printf(s);
+#endif
 }
 
 template <fixed_string Lit> inline void emit_literal() {
@@ -1379,7 +1389,11 @@ template <fixed_string Fmt, typename... Args> consteval auto build_combined_prin
 template <fixed_string CombinedFmt, size_t... FmtIs, typename... CastArgs>
 inline void emit_printf_impl(std::index_sequence<FmtIs...>, CastArgs... args) {
   static constexpr char s[] = {CombinedFmt.data[FmtIs]..., '\0'};
+#ifdef FMT_SYCL_HOST
+  ::printf(s, args...);
+#else
   ::sycl::ext::oneapi::experimental::printf(s, args...);
+#endif
 }
 
 // Walk placeholders at compile time, accumulate printf-cast args in
@@ -1499,19 +1513,38 @@ inline void apply_padding_data(fmt_buf &out, const char *data, int len,
 
 // ── Float formatting helpers ──────────────────────────────────────────────────
 
+// Round val*scale to nearest integer with correct midpoint handling.
+// Non-template so __attribute__((target)) works; on x86-64 forces the FMA
+// ISA so __builtin_fma compiles to a real vfmsub instruction instead of
+// being decomposed into mul+sub (which folds to zero at -O2).
+#ifdef __x86_64__
+__attribute__((target("fma")))
+#endif
+inline uint64_t round_scaled(double val, double scale, double shifted) {
+  auto total = static_cast<uint64_t>(shifted);
+  double frac_part = shifted - static_cast<double>(total);
+  if (frac_part > 0.5) {
+    total++;
+  } else if (frac_part == 0.5) {
+    double err = __builtin_fma(val, scale, -shifted);
+    if (err > 0)
+      total++;
+    else if (err == 0 && (total & 1) != 0)
+      total++;
+  }
+  return total;
+}
+
 // Format a non-negative finite double in fixed notation into buf.
 // Handles up to prec=15 safely (uint64_t scale limit ~1e15 for val<1e4).
 template <typename Buf>
 inline void fmt_fixed(Buf &out, double val, int prec, bool alt = false) {
-  // Compute scale = 10^prec
   double scale = 1.0;
   for (int i = 0; i < prec; i++)
     scale *= 10.0;
 
-  // Round: add 0.5 then split
-  double shifted = val * scale + 0.5;
+  uint64_t total = round_scaled(val, scale, val * scale);
   auto iscale = static_cast<uint64_t>(scale);
-  auto total = static_cast<uint64_t>(shifted);
   uint64_t ipart = total / iscale;
   uint64_t frac = total % iscale;
 
@@ -1558,7 +1591,7 @@ inline void fmt_sci(Buf &out, double val, int prec, bool upper, bool alt = false
     {
       double scale = 1.0;
       for (int i = 0; i < prec; i++) scale *= 10.0;
-      uint64_t total = static_cast<uint64_t>(val * scale + 0.5);
+      uint64_t total = round_scaled(val, scale, val * scale);
       if (total / static_cast<uint64_t>(scale) >= 10) {
         val /= 10.0;
         exp++;
@@ -1624,8 +1657,17 @@ inline void fmt_g(Buf &out, double val, int prec, bool upper, bool alt) {
       }
     }
   }
+  bool use_fixed = (exp >= -4 && exp < prec);
+  if (use_fixed && exp == prec - 1) {
+    uint64_t rounded = static_cast<uint64_t>(val + 0.5);
+    uint64_t t = rounded;
+    int d = 0;
+    do { d++; t /= 10; } while (t);
+    if (d > exp + 1)
+      use_fixed = false;
+  }
   int start = out.len;
-  if (exp >= -4 && exp < prec) {
+  if (use_fixed) {
     int f_prec = prec - (exp + 1);
     if (f_prec < 0)
       f_prec = 0;
@@ -1901,6 +1943,11 @@ inline void format_rt(fmt_buf &out, const print_string<Args...> &ps,
 // for CUDA (vprintf renders %% as %). This breaks CPU SSCP (fputs prints
 // %% literally), but we favor GPU correctness.
 inline void flush_buf(fmt_buf &out, bool escape_pct = true) {
+#ifdef FMT_SYCL_HOST_ACPP
+  (void)escape_pct;
+  out.data[out.len] = '\0';
+  fputs(out.data, stdout);
+#else
   if (__acpp_sscp_is_host) {
     out.data[out.len] = '\0';
     fputs(out.data, stdout);
@@ -1922,6 +1969,7 @@ inline void flush_buf(fmt_buf &out, bool escape_pct = true) {
     out.data[out.len] = '\0';
     __acpp_sscp_print(out.data);
   }
+#endif
 }
 
 } // namespace buffer_path
@@ -1993,7 +2041,7 @@ inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps
 #endif // FMT_SYCL_ACPP
 
 } // namespace khr
-#if !FMT_SYCL_ACPP
+#if !FMT_SYCL_ACPP && !defined(FMT_SYCL_HOST)
 } // namespace _V1
 #endif
 } // namespace sycl

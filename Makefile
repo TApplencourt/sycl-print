@@ -34,7 +34,7 @@ endif
 ALL_BINS := $(TEST_BINS) $(FUZZ_BINS) $(FUZZ_FM) $(FUZZ_PCT)
 
 .PHONY: all build test test-format test-fuzz test-fuzz-pct test-ffast \
-        readme-examples clean
+        readme-examples coverage clean
 
 all: test
 
@@ -135,6 +135,53 @@ test-ffast: $(FUZZ_FM)
 	  else echo "fuzz -ffast-math -$$opt: FAIL ($${ms}ms)"; fail=1; fi; \
 	done; \
 	exit $$fail
+
+# ── Coverage (host-only, no SYCL device needed) ─────────────
+
+LLVM_PROFDATA := $(shell $(CXX) -print-prog-name=llvm-profdata)
+LLVM_COV      := $(shell $(CXX) -print-prog-name=llvm-cov)
+COV_FLAGS     := -fprofile-instr-generate -fcoverage-mapping
+
+COV_TESTS     := integers floats strings layout misc
+COV_DPC_OBJS  := $(foreach t,$(COV_TESTS),build/cov_dpc_$(t).o) build/cov_dpc_fuzz.o
+COV_ACPP_OBJS := $(foreach t,$(COV_TESTS),build/cov_acpp_$(t).o) build/cov_acpp_fuzz.o
+COV_ALL       := build/cov_dpc_all build/cov_acpp_all
+
+build/cov_dpc_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khr_print.hpp | build/
+	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
+
+build/cov_acpp_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khr_print.hpp | build/
+	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST_ACPP -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
+
+build/cov_dpc_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
+
+build/cov_acpp_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST_ACPP -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
+
+build/cov_dpc_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST -O2 $(COV_FLAGS) -c $< -o $@
+
+build/cov_acpp_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST_ACPP -O2 $(COV_FLAGS) -c $< -o $@
+
+build/cov_dpc_all: build/cov_dpc_main.o $(COV_DPC_OBJS)
+	$(CXX) $(COV_FLAGS) $^ -o $@
+
+build/cov_acpp_all: build/cov_acpp_main.o $(COV_ACPP_OBJS)
+	$(CXX) $(COV_FLAGS) $^ -o $@
+
+coverage: $(COV_ALL)
+	@rm -f build/cov_*.profraw
+	@for bin in $(COV_ALL); do \
+	  LLVM_PROFILE_FILE="$$bin.profraw" ./$$bin > /dev/null; \
+	done
+	@$(LLVM_PROFDATA) merge -o build/coverage.profdata build/cov_*.profraw
+	@$(LLVM_COV) report $(firstword $(COV_ALL)) \
+	  $(addprefix -object ,$(wordlist 2,$(words $(COV_ALL)),$(COV_ALL))) \
+	  -instr-profile=build/coverage.profdata \
+	  -sources sycl_khr_print.hpp
+	@rm -f build/cov_*.profraw
 
 clean:
 	rm -rf build/

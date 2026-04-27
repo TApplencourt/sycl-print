@@ -1,7 +1,7 @@
 #ifndef TEST_INC
 #define TEST_NAME integers
 #define TEST_INC "test_integers.cpp"
-#include "test_body.inc"
+#include "test_select_body.inc"
 #else
 
 RUN(PRINT("{}\n", 42));

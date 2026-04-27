@@ -1,7 +1,7 @@
 #ifndef TEST_INC
 #define TEST_NAME floats
 #define TEST_INC "test_floats.cpp"
-#include "test_body.inc"
+#include "test_select_body.inc"
 #else
 
 // Floats — default format ({}) for float and double
@@ -105,6 +105,51 @@ RUN(PRINT("{:f}\n", std::numeric_limits<double>::quiet_NaN()));
 RUN(PRINT("{:f}\n", -1.0f / 0.0f));
 RUN(PRINT("{:g}\n", -1.0f / 0.0f));
 RUN(PRINT("{:F}\n", -1.0f / 0.0f));
+
+// Default format for float/double specials (covers ACPP dragonbox inf/nan path)
+RUN(PRINT("{}\n", 1.0 / 0.0));
+RUN(PRINT("{}\n", -1.0 / 0.0));
+RUN(PRINT("{}\n", 0.0 / 0.0));
+RUN(PRINT("{}\n", 1.0f / 0.0f));
+RUN(PRINT("{}\n", -1.0f / 0.0f));
+RUN(PRINT("{}\n", 0.0f / 0.0f));
+
+// {:g} with precision that triggers prec=1 fallback
+RUN(PRINT("{:.0g}\n", 3.14));
+RUN(PRINT("{:.0g}\n", 0.5));
+
+// More float values with explicit spec (exercises format_float paths)
+RUN(PRINT("{:g}\n", 0.0));
+RUN(PRINT("{:g}\n", -0.0));
+RUN(PRINT("{:e}\n", 0.0f));
+RUN(PRINT("{:f}\n", 0.0f));
+RUN(PRINT("{:g}\n", 0.0f));
+RUN(PRINT("{:g}\n", 1.0e-7));
+RUN(PRINT("{:g}\n", 9.99e+4));
+
+// {:g} rounding at fixed/scientific boundary
+RUN(PRINT("{:g}\n", 9.999995e+5));
+RUN(PRINT("{:g}\n", 9.9999950000001e+5));
+RUN(PRINT("{:g}\n", 9.9e+5));
+
+// fmt_fixed rounding: midpoint ties with IEEE double-rounding
+RUN(PRINT("{:.2g}\n", 9.95));
+RUN(PRINT("{:.1g}\n", 0.95));
+RUN(PRINT("{:.4g}\n", 9999.5));
+RUN(PRINT("{:.0f}\n", 0.5));
+RUN(PRINT("{:.0f}\n", 1.5));
+RUN(PRINT("{:.0f}\n", 2.5));
+RUN(PRINT("{:.1f}\n", 9.95));
+
+// Default format for zero (exercises dragonbox format_shortest zero path)
+RUN(PRINT("{}\n", 0.0));
+RUN(PRINT("{}\n", -0.0));
+RUN(PRINT("{}\n", 0.0f));
+RUN(PRINT("{}\n", -0.0f));
+
+// Default format for small values (format_shortest leading zeros path)
+RUN(PRINT("{}\n", 0.001));
+RUN(PRINT("{}\n", 0.001f));
 
 
 #endif
