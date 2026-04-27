@@ -164,7 +164,8 @@ RUN(P("{:g}\n", 0.0 / 0.0));
 
 for (int _i = 0; _i < N_ITER; _i++) {
   int a = rand_int(); int b = rand_int();
-  RUN(P("{} + {} = {}\n", a, b, a + b));
+  int sum = static_cast<int>(static_cast<unsigned>(a) + static_cast<unsigned>(b));
+  RUN(P("{} + {} = {}\n", a, b, sum));
 }
 
 for (int _i = 0; _i < N_ITER; _i++) {
