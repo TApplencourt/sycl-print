@@ -1513,13 +1513,13 @@ inline void apply_padding_data(fmt_buf &out, const char *data, int len,
 
 // ── Float formatting helpers ──────────────────────────────────────────────────
 
-inline double pow10(int n) {
+constexpr double pow10(int n) {
   double s = 1.0;
   for (int i = 0; i < n; i++) s *= 10.0;
   return s;
 }
 
-inline uint64_t ipow10(int n) {
+constexpr uint64_t ipow10(int n) {
   uint64_t s = 1;
   for (int i = 0; i < n; i++) s *= 10;
   return s;
