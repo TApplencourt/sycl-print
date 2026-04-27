@@ -138,8 +138,8 @@ test-ffast: $(FUZZ_FM)
 
 # ── Coverage (host-only, no SYCL device needed) ─────────────
 
-LLVM_PROFDATA := $(shell $(CXX) -print-prog-name=llvm-profdata)
-LLVM_COV      := $(shell $(CXX) -print-prog-name=llvm-cov)
+LLVM_PROFDATA = $(shell $(CXX) -print-prog-name=llvm-profdata)
+LLVM_COV      = $(shell $(CXX) -print-prog-name=llvm-cov)
 COV_FLAGS     := -fprofile-instr-generate -fcoverage-mapping
 
 COV_TESTS     := integers floats strings layout misc
