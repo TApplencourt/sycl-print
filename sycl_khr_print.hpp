@@ -1513,6 +1513,28 @@ inline void apply_padding_data(fmt_buf &out, const char *data, int len,
 
 // ── Float formatting helpers ──────────────────────────────────────────────────
 
+inline double pow10(int n) {
+  double s = 1.0;
+  for (int i = 0; i < n; i++) s *= 10.0;
+  return s;
+}
+
+inline uint64_t ipow10(int n) {
+  uint64_t s = 1;
+  for (int i = 0; i < n; i++) s *= 10;
+  return s;
+}
+
+inline int find_exponent(double val) {
+  int exp = 0;
+  if (val >= 10.0) {
+    while (val >= 10.0) { val /= 10.0; exp++; }
+  } else if (val < 1.0) {
+    while (val < 1.0) { val *= 10.0; exp--; }
+  }
+  return exp;
+}
+
 // Round val*scale to nearest integer with correct midpoint handling.
 // Non-template so __attribute__((target)) works; on x86-64 forces the FMA
 // ISA so __builtin_fma compiles to a real vfmsub instruction instead of
@@ -1539,10 +1561,7 @@ inline uint64_t round_scaled(double val, double scale, double shifted) {
 // Handles up to prec=15 safely (uint64_t scale limit ~1e15 for val<1e4).
 template <typename Buf>
 inline void fmt_fixed(Buf &out, double val, int prec, bool alt = false) {
-  double scale = 1.0;
-  for (int i = 0; i < prec; i++)
-    scale *= 10.0;
-
+  double scale = pow10(prec);
   uint64_t total = round_scaled(val, scale, val * scale);
   auto iscale = static_cast<uint64_t>(scale);
   uint64_t ipart = total / iscale;
@@ -1573,20 +1592,13 @@ inline void fmt_sci(Buf &out, double val, int prec, bool upper, bool alt = false
     exp = 0;
   } else {
     double orig = val;
+    exp = find_exponent(val);
     double tmp = val;
-    if (tmp >= 10.0) {
-      while (tmp >= 10.0) {
-        tmp /= 10.0;
-        exp++;
-      }
-      val = tmp;
-    } else if (tmp < 1.0) {
-      while (tmp < 1.0) {
-        tmp *= 10.0;
-        exp--;
-      }
-      val = tmp;
-    }
+    if (exp > 0)
+      for (int i = 0; i < exp; i++) tmp /= 10.0;
+    else if (exp < 0)
+      for (int i = 0; i < -exp; i++) tmp *= 10.0;
+    val = tmp;
     // If rounding would make the mantissa overflow to 10 (e.g. 9.999... rounds
     // to 10.00000), detect and adjust.  For small |shift| use the original
     // un-normalized value to avoid accumulated error from repeated /10;
@@ -1596,15 +1608,11 @@ inline void fmt_sci(Buf &out, double val, int prec, bool upper, bool alt = false
       int shift = prec - exp;
       bool overflow = false;
       if (shift >= 0 && shift <= 22) {
-        double check_scale = 1.0;
-        for (int i = 0; i < shift; i++) check_scale *= 10.0;
+        double check_scale = pow10(shift);
         uint64_t total = round_scaled(orig, check_scale, orig * check_scale);
-        uint64_t threshold = 1;
-        for (int i = 0; i <= prec; i++) threshold *= 10;
-        overflow = (total >= threshold);
+        overflow = (total >= ipow10(prec + 1));
       } else {
-        double scale = 1.0;
-        for (int i = 0; i < prec; i++) scale *= 10.0;
+        double scale = pow10(prec);
         uint64_t total = round_scaled(val, scale, val * scale);
         overflow = (total / static_cast<uint64_t>(scale) >= 10);
       }
@@ -1659,20 +1667,8 @@ inline void fmt_g(Buf &out, double val, int prec, bool upper, bool alt) {
   if (prec == 0)
     prec = 1;
   int exp = 0;
-  if (val != 0.0) {
-    double tmp = val;
-    if (tmp >= 10.0) {
-      while (tmp >= 10.0) {
-        tmp /= 10.0;
-        exp++;
-      }
-    } else if (tmp < 1.0) {
-      while (tmp < 1.0) {
-        tmp *= 10.0;
-        exp--;
-      }
-    }
-  }
+  if (val != 0.0)
+    exp = find_exponent(val);
   bool use_fixed = (exp >= -4 && exp < prec);
   if (use_fixed && exp == prec - 1) {
     uint64_t rounded = static_cast<uint64_t>(val + 0.5);
