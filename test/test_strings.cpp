@@ -4,18 +4,22 @@
 #include "test_body.inc"
 #else
 
-// Char, bool
+// Char
 RUN(PRINT("{}\n", 'A'));
-RUN(PRINT("{}\n", false));
-RUN(PRINT("{}\n", true));
 RUN(PRINT("{:d}\n", true));
 RUN(PRINT("{}\n", 'Z'));
 RUN(PRINT("{:d}\n", 'Z'));
+RUN(PRINT("{:c}\n", 65));
+
+// Bool as string — uses %s, guarded for DPC++ O0 string literal bug
+#ifndef FMT_SYCL_WA_STR
+RUN(PRINT("{}\n", false));
+RUN(PRINT("{}\n", true));
 RUN(PRINT("{:>10}\n", true));
 RUN(PRINT("{:<10}\n", false));
 RUN(PRINT("{:s}\n", true));
 RUN(PRINT("{:s}\n", false));
-RUN(PRINT("{:c}\n", 65));
+#endif
 
 // println
 RUN(PRINTLN("hello println"));
