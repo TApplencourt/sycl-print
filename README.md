@@ -93,7 +93,7 @@ Features only available on ACPP:
 
 ### ACPP buffer limit
 
-The output buffer defaults to 255 characters. Output longer than that per `KHR_PRINT` call is silently truncated. Override with:
+The output buffer defaults to 128 characters. Output longer than that per `KHR_PRINT` call is silently truncated. Override with:
 
 ```cpp
 #define KHR_SYCL_PRINT_BUFFER_SIZE 512

@@ -46,6 +46,17 @@ RUN(PRINT("{:f}\n", 0.0));
 RUN(PRINT("{:e}\n", 0.0));
 RUN(PRINT("{:g}\n", 0.0));
 
-
+// Wide widths — on ACPP these exercise the truncation branches in pad_in_place
+// (the host harness truncates the std reference to KHR_SYCL_PRINT_BUFFER_SIZE
+// to match). On DPC++ the output is full-length and matches the std reference.
+RUN(PRINT("{:200d}\n", 7));         // plain lpad overflow
+RUN(PRINT("{:+200d}\n", 7));        // sign+overflow: hits sign-bound check
+RUN(PRINT("{:0200d}\n", 7));        // zero-pad+overflow: hits zfill-bound check
+RUN(PRINT("{:150.2f}\n", 3.14));
+// '#' prefix and '^' alignment are ACPP-only (DPC++ rejects them).
+#if FMT_SYCL_ACPP
+RUN(PRINT("{:#200x}\n", 0xff));     // prefix+overflow: hits prefix-bound check
+RUN(PRINT("{:^200s}\n", "x"));      // center align with truncation
+#endif
 
 #endif

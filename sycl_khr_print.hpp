@@ -190,33 +190,58 @@ inline auto divide_by_10_to_kappa_plus_1(uint64_t n) noexcept -> uint64_t {
 
 template <typename T> struct cache_accessor;
 
+inline constexpr uint64_t float_pow10_table[] = {
+    0x81ceb32c4b43fcf5, 0xa2425ff75e14fc32, 0xcad2f7f5359a3b3f, 0xfd87b5f28300ca0e,
+    0x9e74d1b791e07e49, 0xc612062576589ddb, 0xf79687aed3eec552, 0x9abe14cd44753b53,
+    0xc16d9a0095928a28, 0xf1c90080baf72cb2, 0x971da05074da7bef, 0xbce5086492111aeb,
+    0xec1e4a7db69561a6, 0x9392ee8e921d5d08, 0xb877aa3236a4b44a, 0xe69594bec44de15c,
+    0x901d7cf73ab0acda, 0xb424dc35095cd810, 0xe12e13424bb40e14, 0x8cbccc096f5088cc,
+    0xafebff0bcb24aaff, 0xdbe6fecebdedd5bf, 0x89705f4136b4a598, 0xabcc77118461cefd,
+    0xd6bf94d5e57a42bd, 0x8637bd05af6c69b6, 0xa7c5ac471b478424, 0xd1b71758e219652c,
+    0x83126e978d4fdf3c, 0xa3d70a3d70a3d70b, 0xcccccccccccccccd, 0x8000000000000000,
+    0xa000000000000000, 0xc800000000000000, 0xfa00000000000000, 0x9c40000000000000,
+    0xc350000000000000, 0xf424000000000000, 0x9896800000000000, 0xbebc200000000000,
+    0xee6b280000000000, 0x9502f90000000000, 0xba43b74000000000, 0xe8d4a51000000000,
+    0x9184e72a00000000, 0xb5e620f480000000, 0xe35fa931a0000000, 0x8e1bc9bf04000000,
+    0xb1a2bc2ec5000000, 0xde0b6b3a76400000, 0x8ac7230489e80000, 0xad78ebc5ac620000,
+    0xd8d726b7177a8000, 0x878678326eac9000, 0xa968163f0a57b400, 0xd3c21bcecceda100,
+    0x84595161401484a0, 0xa56fa5b99019a5c8, 0xcecb8f27f4200f3a, 0x813f3978f8940985,
+    0xa18f07d736b90be6, 0xc9f2c9cd04674edf, 0xfc6f7c4045812297, 0x9dc5ada82b70b59e,
+    0xc5371912364ce306, 0xf684df56c3e01bc7, 0x9a130b963a6c115d, 0xc097ce7bc90715b4,
+    0xf0bdc21abb48db21, 0x96769950b50d88f5, 0xbc143fa4e250eb32, 0xeb194f8e1ae525fe,
+    0x92efd1b8d0cf37bf, 0xb7abc627050305ae, 0xe596b7b0c643c71a, 0x8f7e32ce7bea5c70,
+    0xb35dbf821ae4f38c, 0xe0352f62a19e306f};
+
+inline constexpr uint128 double_pow10_significands[] = {
+    {0xff77b1fcbebcdc4f, 0x25e8e89c13bb0f7b}, {0xce5d73ff402d98e3, 0xfb0a3d212dc81290},
+    {0xa6b34ad8c9dfc06f, 0xf42faa48c0ea481f}, {0x86a8d39ef77164bc, 0xae5dff9c02033198},
+    {0xd98ddaee19068c76, 0x3badd624dd9b0958}, {0xafbd2350644eeacf, 0xe5d1929ef90898fb},
+    {0x8df5efabc5979c8f, 0xca8d3ffa1ef463c2}, {0xe55990879ddcaabd, 0xcc420a6a101d0516},
+    {0xb94470938fa89bce, 0xf808e40e8d5b3e6a}, {0x95a8637627989aad, 0xdde7001379a44aa9},
+    {0xf1c90080baf72cb1, 0x5324c68b12dd6339}, {0xc350000000000000, 0x0000000000000000},
+    {0x9dc5ada82b70b59d, 0xf020000000000000}, {0xfee50b7025c36a08, 0x02f236d04753d5b5},
+    {0xcde6fd5e09abcf26, 0xed4c0226b55e6f87}, {0xa6539930bf6bff45, 0x84db8346b786151d},
+    {0x865b86925b9bc5c2, 0x0b8a2392ba45a9b3}, {0xd910f7ff28069da4, 0x1b2ba1518094da05},
+    {0xaf58416654a6babb, 0x387ac8d1970027b3}, {0x8da471a9de737e24, 0x5ceaecfed289e5d3},
+    {0xe4d5e82392a40515, 0x0fabaf3feaa5334b}, {0xb8da1662e7b00a17, 0x3d6a751f3b936244},
+    {0x95527a5202df0ccb, 0x0f37801e0c43ebc9}, {0xf13e34aabb430a15, 0x647726b9e7c68ff0},
+};
+
+inline constexpr uint64_t double_powers_of_5_64[] = {
+    0x0000000000000001, 0x0000000000000005, 0x0000000000000019, 0x000000000000007d,
+    0x0000000000000271, 0x0000000000000c35, 0x0000000000003d09, 0x000000000001312d,
+    0x000000000005f5e1, 0x00000000001dcd65, 0x00000000009502f9, 0x0000000002e90edd,
+    0x000000000e8d4a51, 0x0000000048c27395, 0x000000016bcc41e9, 0x000000071afd498d,
+    0x0000002386f26fc1, 0x000000b1a2bc2ec5, 0x000003782dace9d9, 0x00001158e460913d,
+    0x000056bc75e2d631, 0x0001b1ae4d6e2ef5, 0x000878678326eac9, 0x002a5a058fc295ed,
+    0x00d3c21bcecceda1, 0x0422ca8b0a00a425, 0x14adf4b7320334b9};
+
 template <> struct cache_accessor<float> {
   using carrier_uint = uint32_t;
   using cache_entry_type = uint64_t;
 
   static auto get_cached_power(int k) noexcept -> uint64_t {
-    static constexpr uint64_t table[] = {
-        0x81ceb32c4b43fcf5, 0xa2425ff75e14fc32, 0xcad2f7f5359a3b3f, 0xfd87b5f28300ca0e,
-        0x9e74d1b791e07e49, 0xc612062576589ddb, 0xf79687aed3eec552, 0x9abe14cd44753b53,
-        0xc16d9a0095928a28, 0xf1c90080baf72cb2, 0x971da05074da7bef, 0xbce5086492111aeb,
-        0xec1e4a7db69561a6, 0x9392ee8e921d5d08, 0xb877aa3236a4b44a, 0xe69594bec44de15c,
-        0x901d7cf73ab0acda, 0xb424dc35095cd810, 0xe12e13424bb40e14, 0x8cbccc096f5088cc,
-        0xafebff0bcb24aaff, 0xdbe6fecebdedd5bf, 0x89705f4136b4a598, 0xabcc77118461cefd,
-        0xd6bf94d5e57a42bd, 0x8637bd05af6c69b6, 0xa7c5ac471b478424, 0xd1b71758e219652c,
-        0x83126e978d4fdf3c, 0xa3d70a3d70a3d70b, 0xcccccccccccccccd, 0x8000000000000000,
-        0xa000000000000000, 0xc800000000000000, 0xfa00000000000000, 0x9c40000000000000,
-        0xc350000000000000, 0xf424000000000000, 0x9896800000000000, 0xbebc200000000000,
-        0xee6b280000000000, 0x9502f90000000000, 0xba43b74000000000, 0xe8d4a51000000000,
-        0x9184e72a00000000, 0xb5e620f480000000, 0xe35fa931a0000000, 0x8e1bc9bf04000000,
-        0xb1a2bc2ec5000000, 0xde0b6b3a76400000, 0x8ac7230489e80000, 0xad78ebc5ac620000,
-        0xd8d726b7177a8000, 0x878678326eac9000, 0xa968163f0a57b400, 0xd3c21bcecceda100,
-        0x84595161401484a0, 0xa56fa5b99019a5c8, 0xcecb8f27f4200f3a, 0x813f3978f8940985,
-        0xa18f07d736b90be6, 0xc9f2c9cd04674edf, 0xfc6f7c4045812297, 0x9dc5ada82b70b59e,
-        0xc5371912364ce306, 0xf684df56c3e01bc7, 0x9a130b963a6c115d, 0xc097ce7bc90715b4,
-        0xf0bdc21abb48db21, 0x96769950b50d88f5, 0xbc143fa4e250eb32, 0xeb194f8e1ae525fe,
-        0x92efd1b8d0cf37bf, 0xb7abc627050305ae, 0xe596b7b0c643c71a, 0x8f7e32ce7bea5c70,
-        0xb35dbf821ae4f38c, 0xe0352f62a19e306f};
-    return table[k - float_info<float>::min_k];
+    return float_pow10_table[k - float_info<float>::min_k];
   }
 
   struct compute_mul_result {
@@ -269,43 +294,19 @@ template <> struct cache_accessor<double> {
   using cache_entry_type = uint128;
 
   static auto get_cached_power(int k) noexcept -> uint128 {
-    static constexpr uint128 pow10_significands[] = {
-        {0xff77b1fcbebcdc4f, 0x25e8e89c13bb0f7b}, {0xce5d73ff402d98e3, 0xfb0a3d212dc81290},
-        {0xa6b34ad8c9dfc06f, 0xf42faa48c0ea481f}, {0x86a8d39ef77164bc, 0xae5dff9c02033198},
-        {0xd98ddaee19068c76, 0x3badd624dd9b0958}, {0xafbd2350644eeacf, 0xe5d1929ef90898fb},
-        {0x8df5efabc5979c8f, 0xca8d3ffa1ef463c2}, {0xe55990879ddcaabd, 0xcc420a6a101d0516},
-        {0xb94470938fa89bce, 0xf808e40e8d5b3e6a}, {0x95a8637627989aad, 0xdde7001379a44aa9},
-        {0xf1c90080baf72cb1, 0x5324c68b12dd6339}, {0xc350000000000000, 0x0000000000000000},
-        {0x9dc5ada82b70b59d, 0xf020000000000000}, {0xfee50b7025c36a08, 0x02f236d04753d5b5},
-        {0xcde6fd5e09abcf26, 0xed4c0226b55e6f87}, {0xa6539930bf6bff45, 0x84db8346b786151d},
-        {0x865b86925b9bc5c2, 0x0b8a2392ba45a9b3}, {0xd910f7ff28069da4, 0x1b2ba1518094da05},
-        {0xaf58416654a6babb, 0x387ac8d1970027b3}, {0x8da471a9de737e24, 0x5ceaecfed289e5d3},
-        {0xe4d5e82392a40515, 0x0fabaf3feaa5334b}, {0xb8da1662e7b00a17, 0x3d6a751f3b936244},
-        {0x95527a5202df0ccb, 0x0f37801e0c43ebc9}, {0xf13e34aabb430a15, 0x647726b9e7c68ff0},
-    };
-
-    static constexpr uint64_t powers_of_5_64[] = {
-        0x0000000000000001, 0x0000000000000005, 0x0000000000000019, 0x000000000000007d,
-        0x0000000000000271, 0x0000000000000c35, 0x0000000000003d09, 0x000000000001312d,
-        0x000000000005f5e1, 0x00000000001dcd65, 0x00000000009502f9, 0x0000000002e90edd,
-        0x000000000e8d4a51, 0x0000000048c27395, 0x000000016bcc41e9, 0x000000071afd498d,
-        0x0000002386f26fc1, 0x000000b1a2bc2ec5, 0x000003782dace9d9, 0x00001158e460913d,
-        0x000056bc75e2d631, 0x0001b1ae4d6e2ef5, 0x000878678326eac9, 0x002a5a058fc295ed,
-        0x00d3c21bcecceda1, 0x0422ca8b0a00a425, 0x14adf4b7320334b9};
-
-    static constexpr int compression_ratio = 27;
+    constexpr int compression_ratio = 27;
 
     int cache_index = (k - float_info<double>::min_k) / compression_ratio;
     int kb = cache_index * compression_ratio + float_info<double>::min_k;
     int offset = k - kb;
 
-    uint128 base_cache = pow10_significands[cache_index];
+    uint128 base_cache = double_pow10_significands[cache_index];
     if (offset == 0)
       return base_cache;
 
     int alpha = floor_log2_pow10(kb + offset) - floor_log2_pow10(kb) - offset;
 
-    uint64_t pow5 = powers_of_5_64[offset];
+    uint64_t pow5 = double_powers_of_5_64[offset];
     uint128 recovered_cache = umul128(base_cache.high(), pow5);
     uint128 middle_low = umul128(base_cache.low(), pow5);
 
@@ -1117,7 +1118,7 @@ struct print_string {
 // ============================================================
 
 #ifndef KHR_SYCL_PRINT_BUFFER_SIZE
-#define KHR_SYCL_PRINT_BUFFER_SIZE 255
+#define KHR_SYCL_PRINT_BUFFER_SIZE 128
 #endif
 
 template <int Cap, int ExtraPad = 0>
@@ -1142,7 +1143,6 @@ struct static_buf {
 // Extra 32 bytes let dragonbox write directly into data[len] without a
 // temporary buffer; len is clamped to cap afterwards.
 using fmt_buf = static_buf<KHR_SYCL_PRINT_BUFFER_SIZE, 32>;
-using small_buf = static_buf<48>;
 
 // Write an unsigned integer in any base into raw (data, len, cap) right-to-left.
 template <int Base, bool Upper = false, typename U>
@@ -1511,6 +1511,40 @@ inline void apply_padding_data(fmt_buf &out, const char *data, int len,
   else { out.push_n(fill, pad); emit(); }
 }
 
+// Pad/sign/zfill content already at out.data[content_start..out.len) in place.
+// Final layout: [lpad fill][sign][prefix][zfill '0'][content][rpad fill].
+// Avoids a stack temporary by shifting the already-written content right by
+// `prepend` bytes, then filling the gap. Per-write `p < end` checks let the
+// loops keep running past the buffer cap (matching push_n's silent-truncate).
+inline void pad_in_place(fmt_buf &out, int content_start,
+                         char sign_ch, const char *prefix, int prefix_n, int zfill,
+                         char fill, char align, int width) {
+  int content_len = out.len - content_start;
+  int sign_n = sign_ch ? 1 : 0;
+  int total = sign_n + prefix_n + zfill + content_len;
+  int pad = width > total ? width - total : 0;
+  int lpad = (align == '>') ? pad : (align == '^') ? pad / 2 : 0;
+  int rpad = pad - lpad;
+  int prepend = lpad + sign_n + prefix_n + zfill;
+
+  if (prepend > 0) {
+    int end = fmt_buf::cap;
+    // Drop digits that wouldn't fit after the shift, then move what survives.
+    int kept = content_len;
+    if (content_start + prepend + kept > end) kept = end - content_start - prepend;
+    if (kept < 0) kept = 0;
+    for (int i = kept - 1; i >= 0; i--)
+      out.data[content_start + prepend + i] = out.data[content_start + i];
+    int p = content_start;
+    for (int i = 0; i < lpad && p < end; i++) out.data[p++] = fill;
+    if (sign_ch && p < end) out.data[p++] = sign_ch;
+    for (int i = 0; i < prefix_n && p < end; i++) out.data[p++] = prefix[i];
+    for (int i = 0; i < zfill && p < end; i++) out.data[p++] = '0';
+    out.len = p + kept;
+  }
+  out.push_n(fill, rpad);
+}
+
 // ── Float formatting helpers ──────────────────────────────────────────────────
 
 constexpr double pow10(int n) {
@@ -1736,7 +1770,9 @@ inline void hex_float_to_buf_rt(Buf &content, T arg, const format_spec &spec, bo
   else write_uint_direct<10>(content, static_cast<unsigned>(exponent));
 }
 
-// write_int with runtime spec and etype — writes directly to out (no fmt_buf temporaries)
+// write_int with runtime spec and etype — writes directly to out (no stack temp).
+// Digits are written into out at content_start; pad_in_place then shifts them
+// right to make room for sign/prefix/zfill/lpad. Saves the 68 B `dgt[68]`.
 template <typename T>
 inline void write_int_rt(fmt_buf &out, T arg, const format_spec &spec, char etype, int width) {
   using U = std::decay_t<T>;
@@ -1767,48 +1803,31 @@ inline void write_int_rt(fmt_buf &out, T arg, const format_spec &spec, char etyp
     else if (base == 8 && uval != 0) { pfx[0] = '0'; pfx_n = 1; }
   }
 
-  char dgt[68];
-  int dlen = 0;
+  int content_start = out.len;
   switch (base) {
-    case 2:  write_uint_raw<2,  false>(dgt, dlen, 68, uval); break;
-    case 8:  write_uint_raw<8,  false>(dgt, dlen, 68, uval); break;
-    case 16: if (upper) write_uint_raw<16, true>(dgt, dlen, 68, uval);
-             else       write_uint_raw<16, false>(dgt, dlen, 68, uval);
+    case 2:  write_uint_raw<2,  false>(out.data, out.len, fmt_buf::cap, uval); break;
+    case 8:  write_uint_raw<8,  false>(out.data, out.len, fmt_buf::cap, uval); break;
+    case 16: if (upper) write_uint_raw<16, true>(out.data, out.len, fmt_buf::cap, uval);
+             else       write_uint_raw<16, false>(out.data, out.len, fmt_buf::cap, uval);
              break;
-    default: write_uint_raw<10, false>(dgt, dlen, 68, uval); break;
+    default: write_uint_raw<10, false>(out.data, out.len, fmt_buf::cap, uval); break;
   }
 
+  int dlen = out.len - content_start;
   int content_w = (sc ? 1 : 0) + pfx_n + dlen;
   bool zpad = spec.zero_pad && !spec.fill && !spec.align;
   int zfill = (zpad && width > content_w) ? width - content_w : 0;
-  int total = content_w + zfill;
 
-  char fill = spec.fill_or();
-  char align = spec.align_or();
-  int pad = width > total ? width - total : 0;
-  int lpad = (align == '>') ? pad : (align == '^') ? pad / 2 : 0;
-  int rpad = pad - lpad;
-
-  out.push_n(fill, lpad);
-  if (sc) out.push(sc);
-  for (int i = 0; i < pfx_n; i++) out.push(pfx[i]);
-  out.push_n('0', zfill);
-  for (int i = 0; i < dlen; i++) out.push(dgt[i]);
-  out.push_n(fill, rpad);
+  pad_in_place(out, content_start, sc, pfx, pfx_n, zfill,
+               spec.fill_or(), spec.align_or(), width);
 }
 
-// write_float with runtime spec and etype — writes directly to out (no content buffer)
+// write_float with runtime spec and etype — writes digits directly into out,
+// then pad_in_place handles sign/zfill/alignment. No stack temp.
 template <typename T>
 inline void write_float_rt(fmt_buf &out, T arg, const format_spec &spec, char etype,
                            int dyn_w, int dyn_p) {
-  if (etype == 'a' || etype == 'A') {
-    small_buf content;
-    hex_float_to_buf_rt(content, arg, spec, etype == 'A');
-    apply_padding_data(out, content.data, content.len, spec.fill_or(), spec.align_or(), dyn_w);
-    return;
-  }
-
-  bool upper = (etype == 'F' || etype == 'E' || etype == 'G');
+  bool upper = (etype == 'F' || etype == 'E' || etype == 'G' || etype == 'A');
   double val = static_cast<double>(arg);
   int prec = dyn_p >= 0 ? dyn_p : (spec.precision >= 0 ? spec.precision : 6);
 
@@ -1817,35 +1836,33 @@ inline void write_float_rt(fmt_buf &out, T arg, const format_spec &spec, char et
   if (neg) val = -val;
   char sign_ch = neg ? '-' : (spec.sign == '+') ? '+' : (spec.sign == ' ') ? ' ' : '\0';
 
-  small_buf digits;
-  int biased_exp = static_cast<int>((bits >> 52) & 0x7FF);
-  if (biased_exp == 0x7FF) {
-    uint64_t mant = bits & 0x000FFFFFFFFFFFFFULL;
-    digits.push_str(mant == 0 ? (upper ? "INF" : "inf") : (upper ? "NAN" : "nan"));
-  } else if (etype == 'f' || etype == 'F') {
-    fmt_fixed(digits, val, prec, spec.alt);
-  } else if (etype == 'e' || etype == 'E') {
-    fmt_sci(digits, val, prec, upper, spec.alt);
-  } else if (etype == 'g' || etype == 'G') {
-    fmt_g(digits, val, prec, upper, spec.alt);
+  int content_start = out.len;
+  if (etype == 'a' || etype == 'A') {
+    // hex_float_to_buf_rt emits its own sign (so we can include sign chars in
+    // the padded content width). Suppress the outer sign to avoid duplication.
+    sign_ch = '\0';
+    hex_float_to_buf_rt(out, arg, spec, upper);
+  } else {
+    int biased_exp = static_cast<int>((bits >> 52) & 0x7FF);
+    if (biased_exp == 0x7FF) {
+      uint64_t mant = bits & 0x000FFFFFFFFFFFFFULL;
+      out.push_str(mant == 0 ? (upper ? "INF" : "inf") : (upper ? "NAN" : "nan"));
+    } else if (etype == 'f' || etype == 'F') {
+      fmt_fixed(out, val, prec, spec.alt);
+    } else if (etype == 'e' || etype == 'E') {
+      fmt_sci(out, val, prec, upper, spec.alt);
+    } else if (etype == 'g' || etype == 'G') {
+      fmt_g(out, val, prec, upper, spec.alt);
+    }
   }
 
-  int content_w = (sign_ch ? 1 : 0) + digits.len;
+  int dlen = out.len - content_start;
+  int content_w = (sign_ch ? 1 : 0) + dlen;
   bool zpad = spec.zero_pad && !spec.fill && !spec.align;
   int zfill = (zpad && dyn_w > content_w) ? dyn_w - content_w : 0;
-  int total = content_w + zfill;
 
-  char fill = spec.fill_or();
-  char align = spec.align_or();
-  int pad = dyn_w > total ? dyn_w - total : 0;
-  int lpad = (align == '>') ? pad : (align == '^') ? pad / 2 : 0;
-  int rpad = pad - lpad;
-
-  out.push_n(fill, lpad);
-  if (sign_ch) out.push(sign_ch);
-  out.push_n('0', zfill);
-  for (int i = 0; i < digits.len; i++) out.push(digits.data[i]);
-  out.push_n(fill, rpad);
+  pad_in_place(out, content_start, sign_ch, nullptr, 0, zfill,
+               spec.fill_or(), spec.align_or(), dyn_w);
 }
 
 // Format one argument with runtime spec — dispatches based on type + etype.

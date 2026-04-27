@@ -8,8 +8,20 @@ bool CONCAT(test_, TEST_NAME)(::sycl::queue& q) {
 
   auto std_out = capture_stdout([&]() {
 #define FMT_STD_PATH
+#if FMT_SYCL_ACPP
+    // ACPP device path uses a fixed fmt_buf and silently truncates per print
+    // call. Mirror that on the std reference so tests can include long output.
+#define PRINT(fmt_str, ...)                                                   \
+  std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)                 \
+                   .substr(0, KHR_SYCL_PRINT_BUFFER_SIZE)
+#define PRINTLN(fmt_str, ...)                                                 \
+  std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)                 \
+                   .substr(0, KHR_SYCL_PRINT_BUFFER_SIZE)                     \
+            << '\n'
+#else
 #define PRINT(fmt_str, ...) std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define PRINTLN(fmt_str, ...) std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__) << '\n'
+#endif
 #define RUN(...) do { printf("Test %d\n", ++_test_id); \
   for (int _i = 0; _i < N; _i++) { __VA_ARGS__; } } while (0)
 #include TEST_INC
