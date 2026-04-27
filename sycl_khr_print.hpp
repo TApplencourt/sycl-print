@@ -1588,19 +1588,27 @@ inline void fmt_sci(Buf &out, double val, int prec, bool upper, bool alt = false
       val = tmp;
     }
     // If rounding would make the mantissa overflow to 10 (e.g. 9.999... rounds
-    // to 10.00000), detect using the original un-normalized value to avoid
-    // accumulated error from repeated division by 10.
+    // to 10.00000), detect and adjust.  For small |shift| use the original
+    // un-normalized value to avoid accumulated error from repeated /10;
+    // for extreme exponents (|shift|>22) check_scale would lose exactness or
+    // overflow, so fall back to the normalized value which is accurate enough.
     {
       int shift = prec - exp;
-      double check_scale = 1.0;
-      if (shift >= 0)
+      bool overflow = false;
+      if (shift >= 0 && shift <= 22) {
+        double check_scale = 1.0;
         for (int i = 0; i < shift; i++) check_scale *= 10.0;
-      else
-        for (int i = 0; i < -shift; i++) check_scale /= 10.0;
-      uint64_t total = round_scaled(orig, check_scale, orig * check_scale);
-      uint64_t threshold = 1;
-      for (int i = 0; i <= prec; i++) threshold *= 10;
-      if (total >= threshold) {
+        uint64_t total = round_scaled(orig, check_scale, orig * check_scale);
+        uint64_t threshold = 1;
+        for (int i = 0; i <= prec; i++) threshold *= 10;
+        overflow = (total >= threshold);
+      } else {
+        double scale = 1.0;
+        for (int i = 0; i < prec; i++) scale *= 10.0;
+        uint64_t total = round_scaled(val, scale, val * scale);
+        overflow = (total / static_cast<uint64_t>(scale) >= 10);
+      }
+      if (overflow) {
         val /= 10.0;
         exp++;
       }
