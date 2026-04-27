@@ -565,13 +565,10 @@ template <typename T> inline auto format_shortest(char *buf, T value) -> int {
         for (int i = 0; i < int_digits - sig_size; i++)
           *p++ = '0';
       } else {
-        char tmp[20];
-        write_digits(tmp, significand, sig_size);
-        for (int i = 0; i < int_digits; i++)
-          p[i] = tmp[i];
+        write_digits(p, significand, sig_size);
+        for (int i = sig_size - 1; i >= int_digits; i--)
+          p[i + 1] = p[i];
         p[int_digits] = '.';
-        for (int i = int_digits; i < sig_size; i++)
-          p[i + 1] = tmp[i];
         p += sig_size + 1;
       }
     } else {
@@ -584,13 +581,14 @@ template <typename T> inline auto format_shortest(char *buf, T value) -> int {
       p += sig_size;
     }
   } else {
-    char digits[20];
-    write_digits(digits, significand, sig_size);
-    *p++ = digits[0];
+    write_digits(p, significand, sig_size);
     if (sig_size > 1) {
-      *p++ = '.';
-      for (int i = 1; i < sig_size; i++)
-        *p++ = digits[i];
+      for (int i = sig_size; i >= 2; i--)
+        p[i] = p[i - 1];
+      p[1] = '.';
+      p += sig_size + 1;
+    } else {
+      p += 1;
     }
     *p++ = 'e';
     int abs_exp = exponent < 0 ? -exponent : exponent;
@@ -1116,18 +1114,17 @@ struct print_string {
 #define KHR_SYCL_PRINT_BUFFER_SIZE 255
 #endif
 
-struct fmt_buf {
-  static constexpr int cap = KHR_SYCL_PRINT_BUFFER_SIZE;
-  // Extra 32 bytes let dragonbox write directly into data[len] without a
-  // temporary buffer; len is clamped to cap afterwards.
-  char data[cap + 32]{};
+template <int Cap, int ExtraPad = 0>
+struct static_buf {
+  static constexpr int cap = Cap;
+  char data[Cap + ExtraPad]{};
   int len = 0;
   void push(char c) {
-    if (len < cap)
+    if (len < Cap)
       data[len++] = c;
   }
   void push_n(char c, int n) {
-    for (int i = 0; i < n && len < cap; i++)
+    for (int i = 0; i < n && len < Cap; i++)
       data[len++] = c;
   }
   void push_str(const char *s) {
@@ -1136,30 +1133,10 @@ struct fmt_buf {
   }
 };
 
-struct small_buf {
-  static constexpr int cap = 48;
-  char data[cap]{};
-  int len = 0;
-  void push(char c) {
-    if (len < cap)
-      data[len++] = c;
-  }
-  void push_n(char c, int n) {
-    for (int i = 0; i < n && len < cap; i++)
-      data[len++] = c;
-  }
-  void push_str(const char *s) {
-    while (*s)
-      push(*s++);
-  }
-};
-
-inline void push_bool(fmt_buf &buf, bool val) {
-  if (val)
-    buf.push_str("true");
-  else
-    buf.push_str("false");
-}
+// Extra 32 bytes let dragonbox write directly into data[len] without a
+// temporary buffer; len is clamped to cap afterwards.
+using fmt_buf = static_buf<KHR_SYCL_PRINT_BUFFER_SIZE, 32>;
+using small_buf = static_buf<48>;
 
 // Write an unsigned integer in any base into raw (data, len, cap) right-to-left.
 template <int Base, bool Upper = false, typename U>
@@ -1181,13 +1158,6 @@ inline void write_uint_raw(char *data, int &len, int cap, U val) {
 template <int Base, bool Upper = false, typename U, typename Buf>
 inline void write_uint_direct(Buf &buf, U val) {
   write_uint_raw<Base, Upper>(buf.data, buf.len, static_cast<int>(sizeof(buf.data)), val);
-}
-
-// Format unsigned integer into buffer in given base
-template <int Base, bool Upper, typename U, typename Buf> inline void uint_to_buf(Buf &buf, U val) {
-  static_assert(Base == 2 || Base == 8 || Base == 10 || Base == 16,
-                "uint_to_buf: Base must be 2, 8, 10, or 16");
-  write_uint_direct<Base, Upper>(buf, val);
 }
 
 // Hex digit helper
@@ -1459,11 +1429,6 @@ template <fixed_string Fmt, typename... Args> inline void print_combined_dispatc
 
 namespace buffer_path {
 
-inline void write(fmt_buf &out, const char *s) {
-  while (*s)
-    out.push(*s++);
-}
-
 template <typename T, typename Buf> inline void write_decimal(Buf &out, T val) {
   using U = std::make_unsigned_t<T>;
   U uval;
@@ -1486,7 +1451,7 @@ template <typename T, typename Buf> inline void write_decimal(Buf &out, T val) {
 template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
   using U = std::decay_t<T>;
   if constexpr (std::same_as<U, bool>) {
-    write(out, arg ? "true" : "false");
+    out.push_str(arg ? "true" : "false");
   } else if constexpr (std::same_as<U, char>) {
     out.push(arg);
   } else if constexpr (std::signed_integral<U> || std::unsigned_integral<U>) {
@@ -1505,9 +1470,9 @@ template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
     constexpr bits_t exp_mask = ((bits_t(1) << exp_bits) - 1) << (sizeof(bits_t) * 8 - 1 - exp_bits);
     constexpr bits_t mant_mask = (bits_t(1) << (sizeof(bits_t) * 8 - 1 - exp_bits)) - 1;
     if ((fbits & exp_mask) == exp_mask && (fbits & mant_mask) == 0) {
-      write(out, "inf");
+      out.push_str("inf");
     } else if ((fbits & exp_mask) == exp_mask) {
-      write(out, "nan");
+      out.push_str("nan");
     } else {
       out.len += dragonbox::format_shortest(out.data + out.len, val);
       if (out.len > fmt_buf::cap) out.len = fmt_buf::cap;
@@ -1515,40 +1480,12 @@ template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
   } else if constexpr (std::is_pointer_v<U>) {
     using Pointee = std::remove_cv_t<std::remove_pointer_t<U>>;
     if constexpr (std::same_as<Pointee, char>)
-      write(out, arg);
+      out.push_str(arg);
     else
-      write(out, "<?p>"); // Level 4: pointer
+      out.push_str("<?p>");
   }
 }
 
-
-// Append fmt_buf src into accumulator out.
-inline void append_buf(fmt_buf &out, const fmt_buf &src) {
-  for (int i = 0; i < src.len; i++)
-    out.push(src.data[i]);
-}
-
-// Apply fill+alignment around content and append to out.
-inline void apply_padding(fmt_buf &out, const fmt_buf &content, char fill, char align, int width) {
-  int pad = width > content.len ? width - content.len : 0;
-  if (pad == 0) {
-    append_buf(out, content);
-  } else if (align == '<') {
-    append_buf(out, content);
-    for (int i = 0; i < pad; i++)
-      out.push(fill);
-  } else if (align == '^') {
-    for (int i = 0; i < pad / 2; i++)
-      out.push(fill);
-    append_buf(out, content);
-    for (int i = pad / 2; i < pad; i++)
-      out.push(fill);
-  } else { // '>' (default)
-    for (int i = 0; i < pad; i++)
-      out.push(fill);
-    append_buf(out, content);
-  }
-}
 
 inline void apply_padding_data(fmt_buf &out, const char *data, int len,
                                char fill, char align, int width) {
@@ -1899,7 +1836,7 @@ inline void write_arg_rt(fmt_buf &out, T arg, const format_spec &spec, int dyn_w
   } else if (is_float_format(etype)) {
     if constexpr (std::floating_point<U>) write_float_rt(out, arg, spec, etype, dyn_w, dyn_p);
   } else {
-    write(out, "<?>");
+    out.push_str("<?>");
   }
 }
 
