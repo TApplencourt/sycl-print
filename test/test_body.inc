@@ -22,14 +22,10 @@ bool CONCAT(test_, TEST_NAME)(::sycl::queue& q) {
 #define PRINT(fmt_str, ...) std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define PRINTLN(fmt_str, ...) std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__) << '\n'
 #endif
-#define PRINTF(fmt_str, ...)   PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
-#define PRINTLNF(fmt_str, ...) PRINTLN(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define RUN(...) do { printf("Test %d\n", ++_test_id); \
   for (int _i = 0; _i < N; _i++) { __VA_ARGS__; } } while (0)
 #include TEST_INC
 #undef RUN
-#undef PRINTLNF
-#undef PRINTF
 #undef PRINTLN
 #undef PRINT
 #undef FMT_STD_PATH
@@ -40,14 +36,10 @@ bool CONCAT(test_, TEST_NAME)(::sycl::queue& q) {
   auto sycl_out = capture_stdout([&]() {
 #define PRINT(fmt_str, ...) KHX_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define PRINTLN(fmt_str, ...) KHX_PRINTLN(fmt_str __VA_OPT__(,) __VA_ARGS__)
-#define PRINTF(fmt_str, ...) KHX_PRINTF(fmt_str __VA_OPT__(,) __VA_ARGS__)
-#define PRINTLNF(fmt_str, ...) KHX_PRINTLNF(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define RUN(...) do { printf("Test %d\n", ++_test_id); \
   q.parallel_for(N, [=](::sycl::id<1>) { __VA_ARGS__; }).wait(); } while (0)
 #include TEST_INC
 #undef RUN
-#undef PRINTLNF
-#undef PRINTF
 #undef PRINTLN
 #undef PRINT
   });
