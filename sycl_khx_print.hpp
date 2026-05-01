@@ -2463,11 +2463,13 @@ struct formatter<::sycl::id<N>> {
   }
 };
 
-// sycl::item<N> -> "item(global=(...), range=...)" — recursively resolved
-// through the formatters for sycl::id and sycl::range.
-template <int N>
-struct formatter<::sycl::item<N>> {
-  static constexpr auto format(::sycl::item<N> it) {
+// sycl::item<N, WithOffset> -> "item(global=(...), range=...)" — recursively
+// resolved through the formatters for sycl::id and sycl::range. The second
+// template parameter exists in both DPC++ and ACPP; a single specialization
+// covers both backends and both WithOffset values.
+template <int N, bool WithOffset>
+struct formatter<::sycl::item<N, WithOffset>> {
+  static constexpr auto format(::sycl::item<N, WithOffset> it) {
     return formatted<print_detail::fixed_string{"item(global={}, range={})"},
                      ::sycl::id<N>, ::sycl::range<N>>{
       {it.get_id(), it.get_range()}
