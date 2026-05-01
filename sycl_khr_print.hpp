@@ -1134,6 +1134,10 @@ struct static_buf {
     for (int i = 0; i < n && len < Cap; i++)
       data[len++] = c;
   }
+  void push_data(const char *s, int n) {
+    for (int i = 0; i < n && len < Cap; i++)
+      data[len++] = s[i];
+  }
   void push_str(const char *s) {
     while (*s)
       push(*s++);
@@ -1504,11 +1508,10 @@ template <typename T> inline void write_arg_default(fmt_buf &out, T arg) {
 inline void apply_padding_data(fmt_buf &out, const char *data, int len,
                                char fill, char align, int width) {
   int pad = width > len ? width - len : 0;
-  auto emit = [&]() { for (int i = 0; i < len; i++) out.push(data[i]); };
-  if (pad == 0) { emit(); }
-  else if (align == '<') { emit(); out.push_n(fill, pad); }
-  else if (align == '^') { out.push_n(fill, pad / 2); emit(); out.push_n(fill, pad - pad / 2); }
-  else { out.push_n(fill, pad); emit(); }
+  if (pad == 0) { out.push_data(data, len); }
+  else if (align == '<') { out.push_data(data, len); out.push_n(fill, pad); }
+  else if (align == '^') { out.push_n(fill, pad / 2); out.push_data(data, len); out.push_n(fill, pad - pad / 2); }
+  else { out.push_n(fill, pad); out.push_data(data, len); }
 }
 
 // Pad/sign/zfill content already at out.data[content_start..out.len) in place.
