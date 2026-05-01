@@ -56,7 +56,6 @@ namespace dragonbox {
 struct uint128 {
   uint64_t hi, lo;
   constexpr uint128(uint64_t h, uint64_t l) : hi(h), lo(l) {}
-  constexpr uint128(uint64_t v = 0) : hi(0), lo(v) {}
   constexpr uint64_t high() const { return hi; }
   constexpr uint64_t low() const { return lo; }
   constexpr uint128 &operator+=(uint64_t rhs) {

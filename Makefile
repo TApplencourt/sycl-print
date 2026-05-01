@@ -159,7 +159,7 @@ LLVM_PROFDATA = $(shell $(CXX) -print-prog-name=llvm-profdata)
 LLVM_COV      = $(shell $(CXX) -print-prog-name=llvm-cov)
 COV_FLAGS     := -fprofile-instr-generate -fcoverage-mapping
 
-COV_TESTS     := integers floats strings layout misc
+COV_TESTS     := integers floats strings layout misc formatter
 COV_DPC_OBJS  := $(foreach t,$(COV_TESTS),build/cov_dpc_$(t).o) build/cov_dpc_fuzz.o
 COV_ACPP_OBJS := $(foreach t,$(COV_TESTS),build/cov_acpp_$(t).o) build/cov_acpp_fuzz.o
 COV_ALL       := build/cov_dpc_all build/cov_acpp_all
