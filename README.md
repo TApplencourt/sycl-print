@@ -16,19 +16,22 @@
 int main() {
   sycl::queue q;
   q.parallel_for(4, [=](sycl::id<1> i) {
-    KHX_PRINTLN("work-item {} says {}",
-        static_cast<int>(i), "hello");
+    KHX_PRINTLNF("work-item {} says {}", i, "hello");
   }).wait();
 }
 ```
 
 One possible ordering of the output:
 ```bash
-work-item 0 says hello
-work-item 2 says hello
-work-item 1 says hello
-work-item 3 says hello
+work-item (0) says hello
+work-item (2) says hello
+work-item (1) says hello
+work-item (3) says hello
 ```
+
+`sycl::id` is printed by the built-in formatter (no cast needed). See
+[Custom types](#custom-types) below for the full list of supported types
+and how to add your own.
 
 ## Advanced example
 
@@ -63,9 +66,59 @@ sycl::ext::khx::print<"format string">(args...);    // no trailing newline
 sycl::ext::khx::println<"format string">(args...);  // appends \n
 
 // Convenience macros (avoid angle-bracket syntax)
-KHX_PRINT("format string", args...);
-KHX_PRINTLN("format string", args...);
+KHX_PRINT("format string", args...);    // primitives only
+KHX_PRINTLN("format string", args...);  // primitives only
+
+// Use these when at least one arg is a custom type (sycl::id, sycl::range,
+// or your own formatter<T> specialization). Also accepts plain primitives.
+KHX_PRINTF("format string", args...);
+KHX_PRINTLNF("format string", args...);
 ```
+
+## Custom types
+
+`KHX_PRINTF` / `KHX_PRINTLNF` accept any type for which a
+`sycl::ext::khx::formatter<T>` specialization is in scope. The library
+ships built-in formatters for the following SYCL types:
+
+| Type | Output |
+|------|--------|
+| `sycl::range<N>` (N=1,2,3) | `4`, `4x8`, `4x8x16` |
+| `sycl::id<N>` (N=1,2,3) | `(0)`, `(0, 1)`, `(0, 1, 2)` |
+| `sycl::item<N>` (N=1,2,3) | `item(global=(0, 1), range=2x3)` |
+| `sycl::nd_item<N>` (N=1,2,3) | `nd_item(global=(0, 1), local=(0, 0), range=2x3)` |
+
+### Adding your own
+
+A formatter exposes a single static `format(v)` returning a
+`formatted<Fmt, Args...>` that bundles a compile-time format string with
+the runtime values to splice in. The library recursively expands these
+until everything is a primitive, so a formatter can reference other
+formattable types.
+
+```cpp
+struct vec3 { float x, y, z; };
+
+template <>
+struct sycl::ext::khx::formatter<vec3> {
+  static constexpr auto format(vec3 v) {
+    return formatted<print_detail::fixed_string{"({}, {}, {})"},
+                     float, float, float>{ {v.x, v.y, v.z} };
+  }
+};
+
+// Now usable directly:
+KHX_PRINTLNF("position = {}", vec3{1.0f, 2.0f, 3.0f});
+// → position = (1, 2, 3)
+```
+
+### Restrictions
+
+When at least one arg has a custom formatter, the format string must use
+auto-indexed `{}` placeholders only — positional indices (`{0}`, `{1}`)
+and format specs (`{:>5}`) on the custom-formatter arg are rejected at
+compile time. Use `KHX_PRINT` instead if you need those features with
+purely primitive args.
 
 ### Backend differences
 

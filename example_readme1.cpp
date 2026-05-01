@@ -4,7 +4,6 @@
 int main() {
   sycl::queue q;
   q.parallel_for(4, [=](sycl::id<1> i) {
-    KHX_PRINTLN("work-item {} says {}",
-        static_cast<int>(i), "hello");
+    KHX_PRINTLNF("work-item {} says {}", i, "hello");
   }).wait();
 }
