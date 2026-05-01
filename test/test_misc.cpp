@@ -47,7 +47,7 @@ RUN(PRINT("{:e}\n", 0.0));
 RUN(PRINT("{:g}\n", 0.0));
 
 // Wide widths — on ACPP these exercise the truncation branches in pad_in_place
-// (the host harness truncates the std reference to KHR_SYCL_PRINT_BUFFER_SIZE
+// (the host harness truncates the std reference to KHX_SYCL_PRINT_BUFFER_SIZE
 // to match). On DPC++ the output is full-length and matches the std reference.
 RUN(PRINT("{:200d}\n", 7));         // plain lpad overflow
 RUN(PRINT("{:+200d}\n", 7));        // sign+overflow: hits sign-bound check

@@ -5,6 +5,7 @@ bool test_floats();
 bool test_strings();
 bool test_layout();
 bool test_misc();
+bool test_formatter();
 bool test_fuzz();
 
 int main() {
@@ -14,6 +15,7 @@ int main() {
   ok &= test_strings();
   ok &= test_layout();
   ok &= test_misc();
+  ok &= test_formatter();
   ok &= test_fuzz();
   return ok ? 0 : 1;
 }

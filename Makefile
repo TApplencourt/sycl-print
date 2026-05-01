@@ -17,7 +17,7 @@ endif
 
 # ── Source files ────────────────────────────────────────────
 TEST_DIR    := test
-TEST_NAMES  := integers floats strings layout misc
+TEST_NAMES  := integers floats strings layout misc formatter
 ifdef USE_ACPP
   TEST_NAMES += buffer_path escape_percent
 endif
@@ -46,7 +46,8 @@ build/:
 # ── Test binaries (one binary per test × opt level) ─────────
 
 define TEST_template
-build/test_$(1)_$(2): $(TEST_DIR)/test_$(1).cpp $(TEST_HDRS) sycl_khr_print.hpp | build/
+build/test_$(1)_$(2): $(TEST_DIR)/test_$(1).cpp $(TEST_HDRS) sycl_khx_print.hpp | build/
+	@echo "$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) -$(2) $$(BUFFER_PATH) $$(WA_$(2)) $$< -o $$@"
 	@TIMEFORMAT="  compile test_$(1)_$(2): %Rs"; time \
 	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) -$(2) $$(BUFFER_PATH) $$(WA_$(2)) $$< -o $$@
 endef
@@ -55,20 +56,36 @@ $(foreach t,$(TEST_NAMES),$(foreach o,$(OPT_LEVELS),$(eval $(call TEST_template,
 
 # ── Fuzz targets (single binary per opt level) ──────────────
 
-build/fuzz_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/fuzz_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
+	@echo "$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(BUFFER_PATH) $(WA_$*) $< -o $@"
 	@TIMEFORMAT="  compile fuzz_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(BUFFER_PATH) $(WA_$*) $< -o $@
 
-build/fuzz_ffast_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/fuzz_ffast_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
+	@echo "$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(BUFFER_PATH) $(WA_$*) $< -o $@"
 	@TIMEFORMAT="  compile fuzz_ffast_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(BUFFER_PATH) $(WA_$*) $< -o $@
 
-build/fuzz_escape_percent_%: $(TEST_DIR)/fuzz_escape_percent.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/fuzz_escape_percent_%: $(TEST_DIR)/fuzz_escape_percent.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
+	@echo "$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@"
 	@TIMEFORMAT="  compile fuzz_escape_percent_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
 
+# acpp/clang heap-corrupts ("malloc(): invalid next size") when several heavy
+# fuzz.cpp instantiations link concurrently. Chain fuzz binaries so each
+# waits for the previous one — make -j still parallelizes everything else.
+# Use order-only prereqs (after `|`) so timestamps don't trigger unnecessary
+# rebuilds; we only want serialized build order, not a real dependency.
+ifdef USE_ACPP
+ALL_FUZZ := $(FUZZ_BINS) $(FUZZ_FM) $(FUZZ_PCT)
+PREV_FUZZ := $(wordlist 1,$(words $(ALL_FUZZ)),x $(ALL_FUZZ))
+$(foreach i,$(shell seq 2 $(words $(ALL_FUZZ))),\
+  $(eval $(word $(i),$(ALL_FUZZ)): | $(word $(i),$(PREV_FUZZ))))
+endif
+
 # README examples
-build/example_readme%: example_readme%.cpp sycl_khr_print.hpp | build/
+build/example_readme%: example_readme%.cpp sycl_khx_print.hpp | build/
+	@echo "$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@"
 	@TIMEFORMAT="  compile example_readme$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@
 
@@ -142,27 +159,27 @@ LLVM_PROFDATA = $(shell $(CXX) -print-prog-name=llvm-profdata)
 LLVM_COV      = $(shell $(CXX) -print-prog-name=llvm-cov)
 COV_FLAGS     := -fprofile-instr-generate -fcoverage-mapping
 
-COV_TESTS     := integers floats strings layout misc
+COV_TESTS     := integers floats strings layout misc formatter
 COV_DPC_OBJS  := $(foreach t,$(COV_TESTS),build/cov_dpc_$(t).o) build/cov_dpc_fuzz.o
 COV_ACPP_OBJS := $(foreach t,$(COV_TESTS),build/cov_acpp_$(t).o) build/cov_acpp_fuzz.o
 COV_ALL       := build/cov_dpc_all build/cov_acpp_all
 
-build/cov_dpc_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khr_print.hpp | build/
+build/cov_dpc_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_acpp_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khr_print.hpp | build/
+build/cov_acpp_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST_ACPP -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_dpc_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/cov_dpc_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_acpp_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/cov_acpp_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST_ACPP -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_dpc_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/cov_dpc_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_acpp_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/cov_acpp_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST_ACPP -O2 $(COV_FLAGS) -c $< -o $@
 
 build/cov_dpc_all: build/cov_dpc_main.o $(COV_DPC_OBJS)
@@ -180,7 +197,7 @@ coverage: $(COV_ALL)
 	@$(LLVM_COV) report $(firstword $(COV_ALL)) \
 	  $(addprefix -object ,$(wordlist 2,$(words $(COV_ALL)),$(COV_ALL))) \
 	  -instr-profile=build/coverage.profdata \
-	  -sources sycl_khr_print.hpp
+	  -sources sycl_khx_print.hpp
 	@rm -f build/cov_*.profraw
 
 clean:

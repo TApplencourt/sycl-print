@@ -1,11 +1,11 @@
-// sycl_khr_print.hpp — std::format-like API for SYCL device kernels
+// sycl_khx_print.hpp — std::format-like API for SYCL device kernels
 //
 // Compile-time converts "{}" / "{:spec}" format strings to printf format
 // specifiers, then forwards to sycl::ext::oneapi::experimental::printf.
 //
 // Usage:
-//   sycl::khr::print<"{} + {} = {}">(a, b, c);
-//   KHR_PRINT("{} + {} = {}", a, b, c);   // macro for nicer syntax
+//   sycl::ext::khx::print<"{} + {} = {}">(a, b, c);
+//   KHX_PRINT("{} + {} = {}", a, b, c);   // macro for nicer syntax
 
 #pragma once
 
@@ -35,10 +35,8 @@
 
 
 namespace sycl {
-#if !FMT_SYCL_ACPP && !defined(FMT_SYCL_HOST)
-inline namespace _V1 {
-#endif
-namespace khr {
+namespace ext {
+namespace khx {
 
 namespace print_detail {
 
@@ -58,7 +56,6 @@ namespace dragonbox {
 struct uint128 {
   uint64_t hi, lo;
   constexpr uint128(uint64_t h, uint64_t l) : hi(h), lo(l) {}
-  constexpr uint128(uint64_t v = 0) : hi(0), lo(v) {}
   constexpr uint64_t high() const { return hi; }
   constexpr uint64_t low() const { return lo; }
   constexpr uint128 &operator+=(uint64_t rhs) {
@@ -649,64 +646,13 @@ struct placeholder_info {
   int index; // -1 = auto ({}), >=0 = positional ({N})
 };
 
-// Find the first {} or {:spec} or {N} or {N:spec} placeholder
+// Forward decl — defined alongside the other runtime helpers below.
+constexpr placeholder_info find_placeholder_rt(const char *s, int len, int from);
+
+// NTTP wrapper: same algorithm, just calls the runtime version on Fmt.data.
+// Both are evaluated at compile time when invoked from a consteval context.
 template <fixed_string Fmt, size_t From = 0> consteval placeholder_info find_placeholder() {
-  constexpr size_t len = flen(Fmt);
-  size_t i = From;
-  while (i < len) {
-    if (Fmt[i] == '{') {
-      if (i + 1 < len && Fmt[i + 1] == '{') {
-        i += 2;
-        continue;
-      }
-      // Found start of placeholder — parse index then spec
-      size_t j = i + 1;
-      int index = -1; // auto by default
-
-      // Parse optional numeric index
-      if (j < len && Fmt[j] >= '0' && Fmt[j] <= '9') {
-        index = 0;
-        while (j < len && Fmt[j] >= '0' && Fmt[j] <= '9') {
-          index = index * 10 + (Fmt[j] - '0');
-          j++;
-        }
-      }
-
-      // Parse optional :spec — skip nested {} for dynamic width/prec
-      bool has_spec = false;
-      size_t spec_beg = j;
-      if (j < len && Fmt[j] == ':') {
-        has_spec = true;
-        spec_beg = j + 1;
-        j++;
-        int depth = 0;
-        while (j < len) {
-          if (Fmt[j] == '{')
-            depth++;
-          else if (Fmt[j] == '}') {
-            if (depth == 0)
-              break;
-            depth--;
-          }
-          j++;
-        }
-      }
-      // j now points at '}' (or end)
-      size_t close = j;
-      if (!has_spec)
-        spec_beg = close;
-      return {i, close, spec_beg, has_spec, true, index};
-    } else if (Fmt[i] == '}') {
-      if (i + 1 < len && Fmt[i + 1] == '}') {
-        i += 2;
-        continue;
-      }
-      i++;
-    } else {
-      i++;
-    }
-  }
-  return {0, 0, 0, false, false, -1};
+  return find_placeholder_rt(Fmt.data, static_cast<int>(flen(Fmt)), static_cast<int>(From));
 }
 
 // ============================================================
@@ -779,10 +725,39 @@ template <typename U> inline auto unsigned_int_cast(U arg) {
     return static_cast<unsigned long long>(arg);
 }
 
-// Types supported by sycl::khr::print
+// Types supported by sycl::ext::khx::print
 template <typename T>
 concept sycl_printable = std::same_as<T, bool> || std::same_as<T, char> || std::integral<T> ||
                          std::floating_point<T> || std::is_pointer_v<T>;
+
+} // namespace print_detail
+
+// ============================================================
+// Customization point: formatter<T>
+// Users specialize sycl::ext::khx::formatter<T> to teach the
+// library how to print a custom type. The specialization must
+// expose a static `format(T)` returning a `formatted<Fmt, ...>`
+// where Fmt is a compile-time format string and the values
+// reduce, after recursive expansion, to sycl_printable types.
+// ============================================================
+
+template <print_detail::fixed_string Fmt, typename... Args>
+struct formatted {
+  static constexpr auto format_string = Fmt;
+  std::tuple<Args...> values;
+};
+
+template <typename T> struct formatter; // primary, intentionally undefined
+
+template <typename T>
+concept has_formatter = requires(T v) {
+  { formatter<std::decay_t<T>>::format(v) };
+};
+
+template <typename T>
+concept sycl_formattable = print_detail::sycl_printable<T> || has_formatter<T>;
+
+namespace print_detail {
 
 // ============================================================
 // Format spec parsing and printf format string generation
@@ -844,105 +819,34 @@ constexpr int parse_dynamic_arg(const char *data, size_t len, size_t &i, int &au
   return idx;
 }
 
+// Forward decl — defined alongside the other runtime helpers below.
+constexpr format_spec parse_spec_rt(const char *data, int begin, int end,
+                                    int dyn_auto_start);
+
+// NTTP wrapper: same algorithm, just calls the runtime version on Fmt.data.
 template <fixed_string Fmt, size_t Begin, size_t End, int DynAutoStart = -1>
 consteval format_spec parse_spec() {
-  format_spec s{};
-  size_t i = Begin;
-  int dyn_auto = DynAutoStart; // auto-index counter for dynamic args
-
-  // [[fill]align]
-  if (i + 1 < End && is_align_char(Fmt[i + 1])) {
-    s.fill = Fmt[i];
-    s.align = Fmt[i + 1];
-    i += 2;
-  } else if (i < End && is_align_char(Fmt[i])) {
-    s.align = Fmt[i];
-    i++;
-  }
-
-  // [sign]
-  if (i < End && (Fmt[i] == '+' || Fmt[i] == '-' || Fmt[i] == ' ')) {
-    s.sign = Fmt[i];
-    i++;
-  }
-
-  // [#]
-  if (i < End && Fmt[i] == '#') {
-    s.alt = true;
-    i++;
-  }
-
-  // [0]
-  if (i < End && Fmt[i] == '0') {
-    s.zero_pad = true;
-    i++;
-  }
-
-  // [width] — static digits or dynamic {N}/{}
-  if (i < End && Fmt[i] == '{') {
-    s.width_arg = parse_dynamic_arg(Fmt.data, End, i, dyn_auto);
-  } else {
-    while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
-      s.width = s.width * 10 + (Fmt[i] - '0');
-      i++;
-    }
-  }
-
-  // [.precision] — static digits or dynamic {N}/{}
-  if (i < End && Fmt[i] == '.') {
-    i++;
-    s.precision = 0;
-    if (i < End && Fmt[i] == '{') {
-      s.prec_arg = parse_dynamic_arg(Fmt.data, End, i, dyn_auto);
-      s.precision = -1; // will be resolved at runtime
-    } else {
-      while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
-        s.precision = s.precision * 10 + (Fmt[i] - '0');
-        i++;
-      }
-    }
-  }
-
-  // [type]
-  if (i < End && is_type_char(Fmt[i])) {
-    s.type = Fmt[i];
-  }
-
-  // Count auto dynamic args consumed
-  s.dyn_count = (dyn_auto >= 0 && DynAutoStart >= 0) ? (dyn_auto - DynAutoStart) : 0;
-
-  return s;
+  return parse_spec_rt(Fmt.data, static_cast<int>(Begin), static_cast<int>(End),
+                       DynAutoStart);
 }
 
-// Effective printf type char given the spec and the C++ argument type
+// Forward decl — defined alongside the other runtime helpers below.
+template <typename U> constexpr char effective_type_rt(char spec_type);
+
+// Effective printf type char given the spec and the C++ argument type.
+// NTTP wrapper over effective_type_rt — same algorithm, no duplication.
 template <typename U, char SpecType> consteval char effective_type() {
-  if (SpecType != '\0')
-    return SpecType;
-  if constexpr (std::same_as<U, bool>)
-    return 's';
-  else if constexpr (std::same_as<U, char>)
-    return 'c';
-  else if constexpr (std::floating_point<U>)
-    return 'g';
-  else if constexpr (std::signed_integral<U>)
-    return 'd';
-  else if constexpr (std::unsigned_integral<U>)
-    return 'u';
-  else if constexpr (std::is_pointer_v<U>) {
-    using P = std::remove_cv_t<std::remove_pointer_t<U>>;
-    if constexpr (std::same_as<P, char>)
-      return 's';
-    else
-      return 'p';
-  }
+  return effective_type_rt<U>(SpecType);
 }
 
-#if FMT_SYCL_ACPP
 // ============================================================
-// Runtime parsing + print_string (ACPP only)
+// Runtime placeholder + spec parsing
 // ============================================================
+// Both backends use these. The consteval NTTP wrappers above (find_placeholder,
+// parse_spec) just call into these — same algorithm, no duplication. ACPP also
+// uses them at runtime via print_string's consteval ctor and the inner walker.
 
-// Runtime version of find_placeholder — works on const char* instead of fixed_string NTTP
+// Find the first {} or {:spec} or {N} or {N:spec} placeholder in s[from..len).
 constexpr placeholder_info find_placeholder_rt(const char *s, int len, int from) {
   int i = from;
   while (i < len) {
@@ -1046,8 +950,14 @@ consteval bool type_can_produce_pct() {
   if constexpr (std::same_as<U, char>) return true;
   else if constexpr (std::is_pointer_v<U>)
     return std::same_as<std::remove_cv_t<std::remove_pointer_t<U>>, char>;
-  else return false;
+  else if constexpr (sycl_printable<U>) return false;
+  else return true; // formatter args — be conservative; sub-string may contain '%'
 }
+
+#if FMT_SYCL_ACPP
+// ============================================================
+// print_string — consteval-validated format string for ACPP
+// ============================================================
 
 // Pre-parsed placeholder entry — populated at compile time, consumed at runtime.
 struct ph_entry {
@@ -1060,7 +970,7 @@ struct ph_entry {
 
 // print_string — consteval-validated format string for print("...", args...) syntax.
 // Placeholders and specs are pre-parsed at compile time into phs[].
-template <sycl_printable... Args>
+template <sycl_formattable... Args>
 struct print_string {
   static constexpr int MAX_LEN = 256;
   static constexpr int MAX_PH = 16;
@@ -1117,8 +1027,8 @@ struct print_string {
 // Device-side buffer (used by ACPP accumulator path)
 // ============================================================
 
-#ifndef KHR_SYCL_PRINT_BUFFER_SIZE
-#define KHR_SYCL_PRINT_BUFFER_SIZE 128
+#ifndef KHX_SYCL_PRINT_BUFFER_SIZE
+#define KHX_SYCL_PRINT_BUFFER_SIZE 128
 #endif
 
 template <int Cap, int ExtraPad = 0>
@@ -1146,7 +1056,7 @@ struct static_buf {
 
 // Extra 32 bytes let dragonbox write directly into data[len] without a
 // temporary buffer; len is clamped to cap afterwards.
-using fmt_buf = static_buf<KHR_SYCL_PRINT_BUFFER_SIZE, 32>;
+using fmt_buf = static_buf<KHX_SYCL_PRINT_BUFFER_SIZE, 32>;
 
 // Write an unsigned integer in any base into raw (data, len, cap) right-to-left.
 template <int Base, bool Upper = false, typename U>
@@ -1933,17 +1843,6 @@ inline void resolve_int_arg(int idx, int &out, Args... args) {
     }, args...);
 }
 
-template <typename... Args>
-inline void dispatch_arg(fmt_buf &out, int idx, bool has_spec,
-                         const format_spec &spec, int dyn_w, int dyn_p,
-                         Args... args) {
-  dispatch_pack(idx,
-    [&](auto arg) {
-      if (has_spec) write_arg_rt(out, arg, spec, dyn_w, dyn_p);
-      else write_arg_default(out, arg);
-    }, args...);
-}
-
 inline void write_literal_segment(fmt_buf &out, const char *str, int from, int to) {
   for (int i = from; i < to;) {
     if (i + 1 < to && str[i] == '{' && str[i + 1] == '{') { out.push('{'); i += 2; }
@@ -1952,7 +1851,41 @@ inline void write_literal_segment(fmt_buf &out, const char *str, int from, int t
   }
 }
 
-template <sycl_printable... Args>
+// Forward decl: the literal-walking format loop is needed by dispatch_arg
+// (for formatter inner sub-strings) but its definition wants dispatch_arg.
+template <sycl_formattable... Args>
+inline void format_lit_rt(fmt_buf &out, const char *fmt, int fmt_len, Args... args);
+
+// Per-arg dispatch. Primitives use the spec-aware writers; formatter args
+// recurse into format_lit_rt on the formatter's inner format string + values.
+// Both branches are if-constexpr so the primitive path stays byte-identical.
+template <typename... Args>
+inline void dispatch_arg(fmt_buf &out, int idx, bool has_spec,
+                         const format_spec &spec, int dyn_w, int dyn_p,
+                         Args... args) {
+  dispatch_pack(idx,
+    [&]<typename T>(T arg) {
+      if constexpr (sycl_printable<std::decay_t<T>>) {
+        if (has_spec) write_arg_rt(out, arg, spec, dyn_w, dyn_p);
+        else write_arg_default(out, arg);
+      } else {
+        // has_formatter<T> — specs/dynamic-width on custom args are not
+        // supported on ACPP at runtime; the inner format literal is rewalked.
+        auto inner = ::sycl::ext::khx::formatter<std::decay_t<T>>::format(arg);
+        constexpr auto inner_fmt = decltype(inner)::format_string;
+        std::apply(
+            [&](auto... vs) {
+              format_lit_rt(out, inner_fmt.data, static_cast<int>(flen(inner_fmt)), vs...);
+            },
+            inner.values);
+      }
+    }, args...);
+}
+
+// Top-level walker. Reuses the pre-parsed phs[] for the outer format string
+// (so spec handling for primitives is unchanged) and falls through to
+// dispatch_arg for both primitive and formatter args.
+template <sycl_formattable... Args>
 inline void format_rt(fmt_buf &out, const print_string<Args...> &ps, Args... args) {
   int pos = 0;
   for (int i = 0; i < ps.ph_count; i++) {
@@ -1965,6 +1898,25 @@ inline void format_rt(fmt_buf &out, const print_string<Args...> &ps, Args... arg
     pos = e.close + 1;
   }
   write_literal_segment(out, ps.str, pos, ps.len);
+}
+
+// Inner walker for formatter sub-strings. These don't have a print_string
+// (no compile-time pre-parse), so we re-parse with find_placeholder_rt.
+// No spec/dyn-width support here — Stage 1 forbids them on custom args.
+template <sycl_formattable... Args>
+inline void format_lit_rt(fmt_buf &out, const char *fmt, int fmt_len, Args... args) {
+  int pos = 0;
+  int auto_idx = 0;
+  format_spec empty{};
+  while (true) {
+    auto info = find_placeholder_rt(fmt, fmt_len, pos);
+    if (!info.found) break;
+    write_literal_segment(out, fmt, pos, static_cast<int>(info.open));
+    int idx = (info.index >= 0) ? info.index : auto_idx++;
+    dispatch_arg(out, idx, /*has_spec*/ false, empty, /*dyn_w*/ 0, /*dyn_p*/ -1, args...);
+    pos = static_cast<int>(info.close) + 1;
+  }
+  write_literal_segment(out, fmt, pos, fmt_len);
 }
 
 // Flush buf: escape % → %% then output.
@@ -2012,32 +1964,177 @@ inline void flush_buf(fmt_buf &out, bool escape_pct = true) {
 
 
 // ============================================================
-// Public API
+// formatter_expand — splice user `formatter<T>` results into
+// the parent format string + arg pack at compile time. DPC++
+// only: ACPP dispatches formatter args at runtime inside
+// buffer_path::dispatch_arg, so this machinery would be dead
+// weight there.
 // ============================================================
 
 #if !FMT_SYCL_ACPP
+namespace print_detail {
+namespace formatter_expand {
 
-template <print_detail::fixed_string Fmt, print_detail::sycl_printable... Args>
-inline void print(Args... args) {
-  if constexpr (sizeof...(Args) == 0) {
-    // No args — just emit the literal
-    constexpr size_t end = print_detail::flen(Fmt);
-    constexpr size_t out_sz = print_detail::literal_out_size<Fmt, 0, end>();
-    if constexpr (out_sz > 0) {
-      constexpr auto lit = print_detail::make_literal<Fmt, 0, end>();
-      print_detail::specifiers_path::emit_literal<lit>();
-    }
+// Per-arg post-one-round tuple type: primitive stays as-is, formatter expands to its values.
+// Specialize on the primitive vs custom case so the unused branch never instantiates
+// formatter<T> for primitive T.
+template <typename T, bool IsPrim = sycl_printable<T>> struct per_arg_round;
+template <typename T> struct per_arg_round<T, true> {
+  using type = std::tuple<T>;
+};
+template <typename T> struct per_arg_round<T, false> {
+  using type = decltype(formatter<std::decay_t<T>>::format(std::declval<T>()).values);
+};
+
+template <typename... Args>
+using expand_args_round_t =
+    decltype(std::tuple_cat(std::declval<typename per_arg_round<Args>::type>()...));
+
+// Inner format string of a custom formatter (only valid when has_formatter<T>).
+template <typename T>
+inline constexpr auto inner_format_string =
+    decltype(formatter<std::decay_t<T>>::format(std::declval<T>()))::format_string;
+
+template <typename... Args>
+consteval bool all_primitive() {
+  return (... && sycl_printable<std::decay_t<Args>>);
+}
+
+// Scan Fmt for any positional ({N}) placeholder.
+template <fixed_string Fmt, size_t Pos = 0> consteval bool any_positional() {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    return false;
+  } else if constexpr (info.index >= 0) {
+    return true;
   } else {
-    static_assert(print_detail::specifiers_path::all_printf_compatible<Fmt, 0, 0, Args...>(),
-                  "This format string uses features not supported on DPC++ "
-                  "({:b}, {:a}, {:^}, custom fill, {:#x} with signed int, "
-                  "dynamic width/precision, dragonbox default float). "
-                  "These features are only available on ACPP.");
-    print_detail::specifiers_path::print_combined_dispatch<Fmt>(args...);
+    return any_positional<Fmt, info.close + 1>();
   }
 }
 
+// Scan Fmt; for each placeholder mapping to a has_formatter arg, ensure no spec.
+template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
+consteval bool no_spec_on_custom() {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    return true;
+  } else {
+    using U = std::decay_t<std::tuple_element_t<AutoIdx, std::tuple<Args...>>>;
+    if constexpr (has_formatter<U>) {
+      if constexpr (info.has_spec && info.close > info.spec_beg) return false;
+    }
+    return no_spec_on_custom<Fmt, info.close + 1, AutoIdx + 1, Args...>();
+  }
+}
+
+// Single-round splicer. out=nullptr → measure; non-null → write.
+// For each placeholder: primitive → copy "{...}" verbatim;
+// has_formatter → splice the inner fixed_string body in place of "{...}".
+template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
+consteval size_t walk_expand(char *out, size_t op = 0) {
+  constexpr size_t len = flen(Fmt);
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    if (out) {
+      for (size_t i = Pos; i < len; i++) out[op + (i - Pos)] = Fmt[i];
+    }
+    return op + (len - Pos);
+  } else {
+    if (out) {
+      for (size_t i = Pos; i < info.open; i++) out[op + (i - Pos)] = Fmt[i];
+    }
+    op += info.open - Pos;
+    using U = std::decay_t<std::tuple_element_t<AutoIdx, std::tuple<Args...>>>;
+    if constexpr (sycl_printable<U>) {
+      if (out) {
+        for (size_t i = info.open; i <= info.close; i++)
+          out[op + (i - info.open)] = Fmt[i];
+      }
+      op += (info.close - info.open + 1);
+    } else {
+      constexpr auto inner = inner_format_string<U>;
+      constexpr size_t inner_len = flen(inner);
+      if (out) {
+        for (size_t i = 0; i < inner_len; i++) out[op + i] = inner.data[i];
+      }
+      op += inner_len;
+    }
+    return walk_expand<Fmt, info.close + 1, AutoIdx + 1, Args...>(out, op);
+  }
+}
+
+template <fixed_string Fmt, typename... Args>
+consteval auto expand_format_one_round() {
+  constexpr size_t N = walk_expand<Fmt, 0, 0, Args...>(nullptr) + 1; // +1 for '\0'
+  fixed_string<N> result{};
+  walk_expand<Fmt, 0, 0, Args...>(result.data);
+  result.data[N - 1] = '\0';
+  return result;
+}
+
+// Compile-time fixed-point on (Fmt, Args...).
+template <fixed_string Fmt, int Depth, typename... Args>
+consteval auto expand_format_full();
+
+template <fixed_string Fmt, int Depth, typename Tup, size_t... Is>
+consteval auto expand_format_full_apply(std::index_sequence<Is...>) {
+  return expand_format_full<Fmt, Depth, std::tuple_element_t<Is, Tup>...>();
+}
+
+template <fixed_string Fmt, int Depth, typename... Args>
+consteval auto expand_format_full() {
+  static_assert(Depth < 8,
+                "formatter expansion exceeded depth limit; check for cycles in formatter<T>");
+  if constexpr (all_primitive<Args...>()) {
+    return Fmt;
+  } else {
+    if constexpr (Depth == 0) {
+      static_assert(!any_positional<Fmt>(),
+                    "positional indices ({0}, {1}, ...) are not allowed in format strings "
+                    "that contain custom-formatter args; use auto-indexed {} placeholders");
+      static_assert(no_spec_on_custom<Fmt, 0, 0, std::decay_t<Args>...>(),
+                    "format spec ({:...}) on a custom-formatter arg is not supported");
+    }
+    constexpr auto Fmt2 = expand_format_one_round<Fmt, std::decay_t<Args>...>();
+    using NewTup = expand_args_round_t<std::decay_t<Args>...>;
+    return expand_format_full_apply<Fmt2, Depth + 1, NewTup>(
+        std::make_index_sequence<std::tuple_size_v<NewTup>>{});
+  }
+}
+
+// Runtime per-arg expansion: primitive → tuple{a}; formatter → its .values tuple.
+template <typename T>
+constexpr auto per_arg_expand_rt(T arg) {
+  if constexpr (sycl_printable<std::decay_t<T>>) {
+    return std::tuple<std::decay_t<T>>{arg};
+  } else {
+    return formatter<std::decay_t<T>>::format(arg).values;
+  }
+}
+
+// Runtime fixed-point: matches the type-level recursion of expand_format_full.
+template <typename... Args>
+constexpr auto expand_args_full_rt(Args... args) {
+  if constexpr (all_primitive<Args...>()) {
+    return std::tuple<std::decay_t<Args>...>{args...};
+  } else {
+    return std::apply([](auto... a) { return expand_args_full_rt(a...); },
+                      std::tuple_cat(per_arg_expand_rt(args)...));
+  }
+}
+
+// Forward to the public print<Fmt>(args...) by unpacking a tuple of expanded args.
+// Kept as a free function (not a lambda) so Fmt2 can be used as an NTTP without
+// the C++ "captureless lambda + non-type template param" pitfall that clang flags.
+template <fixed_string Fmt2, typename Tup, size_t... Is>
+inline void apply_print(Tup &t, std::index_sequence<Is...>);
+
+} // namespace formatter_expand
+} // namespace print_detail
+#endif // !FMT_SYCL_ACPP
+
 namespace print_detail {
+
 template <fixed_string Fmt> consteval auto append_newline() {
   constexpr size_t len = flen(Fmt);
   fixed_string<len + 2> result; // +1 for '\n', +1 for '\0'
@@ -2047,23 +2144,71 @@ template <fixed_string Fmt> consteval auto append_newline() {
   result.data[len + 1] = '\0';
   return result;
 }
+
 } // namespace print_detail
 
-template <print_detail::fixed_string Fmt, print_detail::sycl_printable... Args>
+
+// ============================================================
+// Public API
+// ============================================================
+
+#if !FMT_SYCL_ACPP
+
+// DPC++ path: the format string must reach the consteval splicer as an NTTP,
+// so the public entry point is a function template parameterized on it. The
+// KHX_PRINT macro hides the angle-bracket call shape.
+template <print_detail::fixed_string Fmt, sycl_formattable... Args>
+inline void print(Args... args) {
+  if constexpr ((print_detail::sycl_printable<std::decay_t<Args>> && ...)) {
+    if constexpr (sizeof...(Args) == 0) {
+      // No args — just emit the literal
+      constexpr size_t end = print_detail::flen(Fmt);
+      constexpr size_t out_sz = print_detail::literal_out_size<Fmt, 0, end>();
+      if constexpr (out_sz > 0) {
+        constexpr auto lit = print_detail::make_literal<Fmt, 0, end>();
+        print_detail::specifiers_path::emit_literal<lit>();
+      }
+    } else {
+      static_assert(print_detail::specifiers_path::all_printf_compatible<Fmt, 0, 0, Args...>(),
+                    "This format string uses features not supported on DPC++ "
+                    "({:b}, {:a}, {:^}, custom fill, {:#x} with signed int, "
+                    "dynamic width/precision, dragonbox default float). "
+                    "These features are only available on ACPP.");
+      print_detail::specifiers_path::print_combined_dispatch<Fmt>(args...);
+    }
+  } else {
+    // Formatter splicer — runs entirely at compile time, then forwards
+    // through the primitive path with the expanded format + flattened args.
+    constexpr auto Fmt2 =
+        print_detail::formatter_expand::expand_format_full<Fmt, 0, std::decay_t<Args>...>();
+    auto values = print_detail::formatter_expand::expand_args_full_rt(args...);
+    print_detail::formatter_expand::apply_print<Fmt2>(
+        values, std::make_index_sequence<std::tuple_size_v<decltype(values)>>{});
+  }
+}
+
+template <print_detail::fixed_string Fmt, sycl_formattable... Args>
 inline void println(Args... args) {
   print<print_detail::append_newline<Fmt>()>(args...);
 }
 
 #else // FMT_SYCL_ACPP
 
-template <print_detail::sycl_printable... Args>
+// ACPP path: keep the value-style public API
+//   sycl::ext::khx::println("…", args…)
+// for both primitive and formatter args. The format literal is captured by
+// print_string's consteval ctor (so no NTTP at the call site). format_rt
+// now dispatches both primitive and formatter args via if constexpr — the
+// primitive path stays byte-identical, formatter args recurse into the
+// inner walker on the formatter's sub-format-string.
+template <sycl_formattable... Args>
 inline void print(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
   print_detail::fmt_buf out;
   print_detail::buffer_path::format_rt(out, ps, args...);
   print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
 
-template <print_detail::sycl_printable... Args>
+template <sycl_formattable... Args>
 inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
   print_detail::fmt_buf out;
   print_detail::buffer_path::format_rt(out, ps, args...);
@@ -2073,17 +2218,129 @@ inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps
 
 #endif // FMT_SYCL_ACPP
 
-} // namespace khr
-#if !FMT_SYCL_ACPP && !defined(FMT_SYCL_HOST)
-} // namespace _V1
-#endif
+} // namespace khx
+} // namespace ext
 } // namespace sycl
+
+// Definition of the apply_print helper forward-declared above.
+// Lives outside the public API section because it calls back into
+// sycl::ext::khx::print<Fmt2>(...) which must already be declared.
+#if !FMT_SYCL_ACPP
+namespace sycl::ext::khx::print_detail::formatter_expand {
+template <::sycl::ext::khx::print_detail::fixed_string Fmt2, typename Tup, size_t... Is>
+inline void apply_print(Tup &t, std::index_sequence<Is...>) {
+  ::sycl::ext::khx::print<Fmt2>(std::get<Is>(t)...);
+}
+} // namespace sycl::ext::khx::print_detail::formatter_expand
+#endif // !FMT_SYCL_ACPP
+
+// ============================================================
+// Built-in formatter specializations for SYCL types
+// ============================================================
+// Only enabled when <sycl/sycl.hpp> is in play (skips host-only coverage builds
+// which include the header without SYCL).
+
+#if !defined(FMT_SYCL_HOST) && !defined(FMT_SYCL_HOST_ACPP)
+
+namespace sycl {
+namespace ext {
+namespace khx {
+namespace print_detail {
+
+// Build "{}", "{}x{}", "{}x{}x{}", ... with a chosen separator.
+template <int N, char Sep> consteval auto make_sep_fmt() {
+  static_assert(N >= 1, "make_sep_fmt requires N >= 1");
+  // Output size: N copies of "{}" + (N-1) separators + '\0'
+  constexpr size_t Sz = static_cast<size_t>(N) * 2 + (N - 1) + 1;
+  fixed_string<Sz> r{};
+  size_t p = 0;
+  for (int i = 0; i < N; i++) {
+    if (i > 0) r.data[p++] = Sep;
+    r.data[p++] = '{';
+    r.data[p++] = '}';
+  }
+  r.data[p] = '\0';
+  return r;
+}
+
+// Build "({})", "({}, {})", "({}, {}, {})", ...
+template <int N> consteval auto make_id_fmt() {
+  static_assert(N >= 1, "make_id_fmt requires N >= 1");
+  // "(" + N×"{}" + (N-1)×", " + ")" + '\0'
+  constexpr size_t Sz = 1 + static_cast<size_t>(N) * 2 + (N - 1) * 2 + 1 + 1;
+  fixed_string<Sz> r{};
+  size_t p = 0;
+  r.data[p++] = '(';
+  for (int i = 0; i < N; i++) {
+    if (i > 0) { r.data[p++] = ','; r.data[p++] = ' '; }
+    r.data[p++] = '{';
+    r.data[p++] = '}';
+  }
+  r.data[p++] = ')';
+  r.data[p] = '\0';
+  return r;
+}
+
+} // namespace print_detail
+
+// sycl::range<N> -> "AxBxC"
+template <int N>
+struct formatter<::sycl::range<N>> {
+  static constexpr auto format(::sycl::range<N> r) {
+    return [&]<size_t... Is>(std::index_sequence<Is...>) {
+      return formatted<print_detail::make_sep_fmt<N, 'x'>(),
+                       std::decay_t<decltype(r[Is])>...>{ {r[Is]...} };
+    }(std::make_index_sequence<N>{});
+  }
+};
+
+// sycl::id<N> -> "(A, B, C)"
+template <int N>
+struct formatter<::sycl::id<N>> {
+  static constexpr auto format(::sycl::id<N> id) {
+    return [&]<size_t... Is>(std::index_sequence<Is...>) {
+      return formatted<print_detail::make_id_fmt<N>(),
+                       std::decay_t<decltype(id[Is])>...>{ {id[Is]...} };
+    }(std::make_index_sequence<N>{});
+  }
+};
+
+// sycl::item<N, WithOffset> -> "item(global=(...), range=...)" — recursively
+// resolved through the formatters for sycl::id and sycl::range. The second
+// template parameter exists in both DPC++ and ACPP; a single specialization
+// covers both backends and both WithOffset values.
+template <int N, bool WithOffset>
+struct formatter<::sycl::item<N, WithOffset>> {
+  static constexpr auto format(::sycl::item<N, WithOffset> it) {
+    return formatted<print_detail::fixed_string{"item(global={}, range={})"},
+                     ::sycl::id<N>, ::sycl::range<N>>{
+      {it.get_id(), it.get_range()}
+    };
+  }
+};
+
+// sycl::nd_item<N> -> "nd_item(global=..., local=..., range=...)"
+template <int N>
+struct formatter<::sycl::nd_item<N>> {
+  static constexpr auto format(::sycl::nd_item<N> nd) {
+    return formatted<print_detail::fixed_string{"nd_item(global={}, local={}, range={})"},
+                     ::sycl::id<N>, ::sycl::id<N>, ::sycl::range<N>>{
+      {nd.get_global_id(), nd.get_local_id(), nd.get_global_range()}
+    };
+  }
+};
+
+} // namespace khx
+} // namespace ext
+} // namespace sycl
+
+#endif // !FMT_SYCL_HOST && !FMT_SYCL_HOST_ACPP
 
 // Convenience macro — nicer syntax without explicit template angle brackets
 #if FMT_SYCL_ACPP
-#define KHR_PRINT(fmtstr, ...) ::sycl::khr::print(fmtstr __VA_OPT__(,) __VA_ARGS__)
-#define KHR_PRINTLN(fmtstr, ...) ::sycl::khr::println(fmtstr __VA_OPT__(,) __VA_ARGS__)
+#define KHX_PRINT(fmtstr, ...) ::sycl::ext::khx::print(fmtstr __VA_OPT__(,) __VA_ARGS__)
+#define KHX_PRINTLN(fmtstr, ...) ::sycl::ext::khx::println(fmtstr __VA_OPT__(,) __VA_ARGS__)
 #else
-#define KHR_PRINT(fmtstr, ...) ::sycl::khr::print<fmtstr>(__VA_ARGS__)
-#define KHR_PRINTLN(fmtstr, ...) ::sycl::khr::println<fmtstr>(__VA_ARGS__)
+#define KHX_PRINT(fmtstr, ...) ::sycl::ext::khx::print<fmtstr>(__VA_ARGS__)
+#define KHX_PRINTLN(fmtstr, ...) ::sycl::ext::khx::println<fmtstr>(__VA_ARGS__)
 #endif

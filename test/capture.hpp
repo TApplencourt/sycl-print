@@ -12,7 +12,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "../sycl_khr_print.hpp"
+#include "../sycl_khx_print.hpp"
 #if !defined(FMT_SYCL_HOST) && !defined(FMT_SYCL_HOST_ACPP)
 #include <sycl/sycl.hpp>
 #endif

@@ -10,32 +10,35 @@
 > Source: [`example_readme1.cpp`](example_readme1.cpp)
 
 ```cpp
-#include "sycl_khr_print.hpp"
+#include "sycl_khx_print.hpp"
 #include <sycl/sycl.hpp>
 
 int main() {
   sycl::queue q;
   q.parallel_for(4, [=](sycl::id<1> i) {
-    KHR_PRINTLN("work-item {} says {}",
-        static_cast<int>(i), "hello");
+    KHX_PRINTLNF("work-item {} says {}", i, "hello");
   }).wait();
 }
 ```
 
 One possible ordering of the output:
 ```bash
-work-item 0 says hello
-work-item 2 says hello
-work-item 1 says hello
-work-item 3 says hello
+work-item (0) says hello
+work-item (2) says hello
+work-item (1) says hello
+work-item (3) says hello
 ```
+
+`sycl::id` is printed by the built-in formatter (no cast needed). See
+[Custom types](#custom-types) below for the full list of supported types
+and how to add your own.
 
 ## Advanced example
 
 > Source: [`example_readme2.cpp`](example_readme2.cpp)
 
 ```cpp
-#include "sycl_khr_print.hpp"
+#include "sycl_khx_print.hpp"
 #include <sycl/sycl.hpp>
 
 int main() {
@@ -43,7 +46,7 @@ int main() {
   q.parallel_for(4, [=](sycl::id<1> i) {
     int id = static_cast<int>(i);
     float v = 3.14159f * (id + 1);
-    KHR_PRINTLN("format used: 'id: {{0}}, v2dp={{1:6.2f}}, v={{1:8.5f}}' -> id: {0}, v2dp={1:6.2f}, v={1:8.5f}", id, v);
+    KHX_PRINTLN("format used: 'id: {{0}}, v2dp={{1:6.2f}}, v={{1:8.5f}}' -> id: {0}, v2dp={1:6.2f}, v={1:8.5f}", id, v);
   }).wait();
 }
 ```
@@ -59,13 +62,62 @@ format used: 'id: {0}, v2dp={1:6.2f}, v={1:8.5f}' -> id: 3, v2dp= 12.57, v=12.56
 ## API
 
 ```cpp
-sycl::khr::print<"format string">(args...);    // no trailing newline
-sycl::khr::println<"format string">(args...);  // appends \n
+sycl::ext::khx::print<"format string">(args...);    // no trailing newline
+sycl::ext::khx::println<"format string">(args...);  // appends \n
 
 // Convenience macros (avoid angle-bracket syntax)
-KHR_PRINT("format string", args...);
-KHR_PRINTLN("format string", args...);
+KHX_PRINT("format string", args...);    // primitives only
+KHX_PRINTLN("format string", args...);  // primitives only
+
+// Use these when at least one arg is a custom type (sycl::id, sycl::range,
+// or your own formatter<T> specialization). Also accepts plain primitives.
+KHX_PRINTF("format string", args...);
+KHX_PRINTLNF("format string", args...);
 ```
+
+## Custom types
+
+`KHX_PRINTF` / `KHX_PRINTLNF` accept any type for which a
+`sycl::ext::khx::formatter<T>` specialization is in scope. The library
+ships built-in formatters for the following SYCL types:
+
+| Type | Output |
+|------|--------|
+| `sycl::range<N>` (N=1,2,3) | `4`, `4x8`, `4x8x16` |
+| `sycl::id<N>` (N=1,2,3) | `(0)`, `(0, 1)`, `(0, 1, 2)` |
+| `sycl::item<N>` (N=1,2,3) | `item(global=(0, 1), range=2x3)` |
+| `sycl::nd_item<N>` (N=1,2,3) | `nd_item(global=(0, 1), local=(0, 0), range=2x3)` |
+
+### Adding your own
+
+A formatter exposes a single static `format(v)` returning a
+`formatted<Fmt, Args...>` that bundles a compile-time format string with
+the runtime values to splice in. The library recursively expands these
+until everything is a primitive, so a formatter can reference other
+formattable types.
+
+```cpp
+struct vec3 { float x, y, z; };
+
+template <>
+struct sycl::ext::khx::formatter<vec3> {
+  static constexpr auto format(vec3 v) {
+    return formatted<print_detail::fixed_string{"({}, {}, {})"},
+                     float, float, float>{ {v.x, v.y, v.z} };
+  }
+};
+
+// Now usable directly:
+KHX_PRINTLNF("position = {}", vec3{1.0f, 2.0f, 3.0f});
+// → position = (1, 2, 3)
+```
+
+### Restrictions
+
+When at least one arg has a custom formatter, the format string must use
+auto-indexed `{}` placeholders only — positional indices (`{0}`, `{1}`)
+and format specs (`{:>5}`) on the custom-formatter arg are rejected at
+compile time. Calls with all-primitive args are unaffected.
 
 ### Backend differences
 
@@ -93,11 +145,11 @@ Features only available on ACPP:
 
 ### ACPP buffer limit
 
-The output buffer defaults to 128 characters. Output longer than that per `KHR_PRINT` call is silently truncated. Override with:
+The output buffer defaults to 128 characters. Output longer than that per `KHX_PRINT` call is silently truncated. Override with:
 
 ```cpp
-#define KHR_SYCL_PRINT_BUFFER_SIZE 512
-#include "sycl_khr_print.hpp"
+#define KHX_SYCL_PRINT_BUFFER_SIZE 512
+#include "sycl_khx_print.hpp"
 ```
 
 ## Build
