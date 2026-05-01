@@ -2005,44 +2005,13 @@ inline void format_rt(fmt_buf &out, const print_string<Args...> &ps, Args... arg
 // formatter<T>::format(arg) and re-entering format_pack_rt on the inner
 // format string + inner values tuple.
 
-// Forward decl of the recursive walker (literal-only — no print_string needed
-// for the inner sub-strings; we re-walk them directly with find_placeholder_rt).
+// Walks a raw format literal and dispatches each placeholder against `args`.
+// At each placeholder: primitive arg → write_arg_default; formatter arg →
+// call formatter<T>::format(arg) and recurse on the inner format string +
+// inner values tuple. Re-entered both at top level (outer format from
+// print_string) and recursively for nested formatters.
 template <sycl_formattable... Args>
-inline void format_pack_rt_inner(fmt_buf &out, const char *fmt, int fmt_len, Args... args);
-
-// Apply over a tuple to recover its values as a pack.
-template <typename Tup, size_t... Is>
-inline void format_pack_rt_apply(fmt_buf &out, const char *fmt, int fmt_len,
-                                 const Tup &t, std::index_sequence<Is...>) {
-  format_pack_rt_inner(out, fmt, fmt_len, std::get<Is>(t)...);
-}
-
-// Per-arg dispatch: primitive → write_arg_default; formatter → recurse into inner.
-template <typename T>
-inline void dispatch_one(fmt_buf &out, T arg) {
-  if constexpr (sycl_printable<std::decay_t<T>>) {
-    write_arg_default(out, arg);
-  } else {
-    auto inner = ::sycl::ext::khx::formatter<std::decay_t<T>>::format(arg);
-    constexpr auto inner_fmt = decltype(inner)::format_string;
-    constexpr int inner_len = static_cast<int>(flen(inner_fmt));
-    format_pack_rt_apply(out, inner_fmt.data, inner_len, inner.values,
-                         std::make_index_sequence<std::tuple_size_v<decltype(inner.values)>>{});
-  }
-}
-
-// Pack-fold lookup: dispatch_one on the arg at runtime index `idx`.
-template <typename... Args>
-inline void dispatch_one_pack(fmt_buf &out, int idx, Args... args) {
-  dispatch_pack(idx, [&](auto arg) { dispatch_one(out, arg); }, args...);
-}
-
-// Walks a raw format literal (not a print_string) and dispatches each
-// placeholder via dispatch_one_pack. Used both at the top level (when the
-// outer format is already in print_string) and recursively for inner
-// formatter sub-strings.
-template <sycl_formattable... Args>
-inline void format_pack_rt_inner(fmt_buf &out, const char *fmt, int fmt_len, Args... args) {
+inline void format_pack_rt(fmt_buf &out, const char *fmt, int fmt_len, Args... args) {
   int pos = 0;
   int auto_idx = 0;
   while (true) {
@@ -2050,7 +2019,19 @@ inline void format_pack_rt_inner(fmt_buf &out, const char *fmt, int fmt_len, Arg
     if (!info.found) break;
     write_literal_segment(out, fmt, pos, static_cast<int>(info.open));
     int idx = (info.index >= 0) ? info.index : auto_idx++;
-    dispatch_one_pack(out, idx, args...);
+    dispatch_pack(idx, [&]<typename T>(T arg) {
+      if constexpr (sycl_printable<std::decay_t<T>>) {
+        write_arg_default(out, arg);
+      } else {
+        auto inner = ::sycl::ext::khx::formatter<std::decay_t<T>>::format(arg);
+        constexpr auto inner_fmt = decltype(inner)::format_string;
+        std::apply(
+            [&](auto... vs) {
+              format_pack_rt(out, inner_fmt.data, static_cast<int>(flen(inner_fmt)), vs...);
+            },
+            inner.values);
+      }
+    }, args...);
     pos = static_cast<int>(info.close) + 1;
   }
   write_literal_segment(out, fmt, pos, fmt_len);
@@ -2058,7 +2039,7 @@ inline void format_pack_rt_inner(fmt_buf &out, const char *fmt, int fmt_len, Arg
 
 template <sycl_formattable... Args>
 inline void format_pack_rt(fmt_buf &out, const print_string<Args...> &ps, Args... args) {
-  format_pack_rt_inner(out, ps.str, ps.len, args...);
+  format_pack_rt(out, ps.str, ps.len, args...);
 }
 
 // Flush buf: escape % → %% then output.
@@ -2140,11 +2121,6 @@ inline constexpr auto inner_format_string =
 template <typename... Args>
 consteval bool all_primitive() {
   return (... && sycl_printable<std::decay_t<Args>>);
-}
-
-template <typename... Args>
-consteval bool any_has_formatter() {
-  return (... || has_formatter<std::decay_t<Args>>);
 }
 
 // Scan Fmt for any positional ({N}) placeholder.
@@ -2259,11 +2235,6 @@ constexpr auto per_arg_expand_rt(T arg) {
   }
 }
 
-template <typename... Args>
-constexpr auto expand_args_round_rt(Args... args) {
-  return std::tuple_cat(per_arg_expand_rt(args)...);
-}
-
 // Runtime fixed-point: matches the type-level recursion of expand_format_full.
 template <typename... Args>
 constexpr auto expand_args_full_rt(Args... args) {
@@ -2271,7 +2242,7 @@ constexpr auto expand_args_full_rt(Args... args) {
     return std::tuple<std::decay_t<Args>...>{args...};
   } else {
     return std::apply([](auto... a) { return expand_args_full_rt(a...); },
-                      expand_args_round_rt(args...));
+                      std::tuple_cat(per_arg_expand_rt(args)...));
   }
 }
 
@@ -2351,25 +2322,29 @@ inline void println(Args... args) {
 // for both primitive and formatter args. The format literal is captured by
 // print_string's consteval ctor (so no NTTP at the call site) and the
 // runtime walker dispatches per arg via if constexpr on sycl_printable<T>.
+namespace print_detail {
+template <sycl_formattable... Args>
+inline void format_into(fmt_buf &out, const print_string<std::type_identity_t<Args>...> &ps,
+                        Args... args) {
+  if constexpr ((sycl_printable<std::decay_t<Args>> && ...)) {
+    buffer_path::format_rt(out, ps, args...);
+  } else {
+    buffer_path::format_pack_rt(out, ps, args...);
+  }
+}
+} // namespace print_detail
+
 template <sycl_formattable... Args>
 inline void print(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
   print_detail::fmt_buf out;
-  if constexpr ((print_detail::sycl_printable<std::decay_t<Args>> && ...)) {
-    print_detail::buffer_path::format_rt(out, ps, args...);
-  } else {
-    print_detail::buffer_path::format_pack_rt(out, ps, args...);
-  }
+  print_detail::format_into(out, ps, args...);
   print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
 
 template <sycl_formattable... Args>
 inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
   print_detail::fmt_buf out;
-  if constexpr ((print_detail::sycl_printable<std::decay_t<Args>> && ...)) {
-    print_detail::buffer_path::format_rt(out, ps, args...);
-  } else {
-    print_detail::buffer_path::format_pack_rt(out, ps, args...);
-  }
+  print_detail::format_into(out, ps, args...);
   out.push('\n');
   print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
