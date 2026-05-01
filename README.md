@@ -10,13 +10,13 @@
 > Source: [`example_readme1.cpp`](example_readme1.cpp)
 
 ```cpp
-#include "sycl_khr_print.hpp"
+#include "sycl_khx_print.hpp"
 #include <sycl/sycl.hpp>
 
 int main() {
   sycl::queue q;
   q.parallel_for(4, [=](sycl::id<1> i) {
-    KHR_PRINTLN("work-item {} says {}",
+    KHX_PRINTLN("work-item {} says {}",
         static_cast<int>(i), "hello");
   }).wait();
 }
@@ -35,7 +35,7 @@ work-item 3 says hello
 > Source: [`example_readme2.cpp`](example_readme2.cpp)
 
 ```cpp
-#include "sycl_khr_print.hpp"
+#include "sycl_khx_print.hpp"
 #include <sycl/sycl.hpp>
 
 int main() {
@@ -43,7 +43,7 @@ int main() {
   q.parallel_for(4, [=](sycl::id<1> i) {
     int id = static_cast<int>(i);
     float v = 3.14159f * (id + 1);
-    KHR_PRINTLN("format used: 'id: {{0}}, v2dp={{1:6.2f}}, v={{1:8.5f}}' -> id: {0}, v2dp={1:6.2f}, v={1:8.5f}", id, v);
+    KHX_PRINTLN("format used: 'id: {{0}}, v2dp={{1:6.2f}}, v={{1:8.5f}}' -> id: {0}, v2dp={1:6.2f}, v={1:8.5f}", id, v);
   }).wait();
 }
 ```
@@ -59,12 +59,12 @@ format used: 'id: {0}, v2dp={1:6.2f}, v={1:8.5f}' -> id: 3, v2dp= 12.57, v=12.56
 ## API
 
 ```cpp
-sycl::khr::print<"format string">(args...);    // no trailing newline
-sycl::khr::println<"format string">(args...);  // appends \n
+sycl::ext::khx::print<"format string">(args...);    // no trailing newline
+sycl::ext::khx::println<"format string">(args...);  // appends \n
 
 // Convenience macros (avoid angle-bracket syntax)
-KHR_PRINT("format string", args...);
-KHR_PRINTLN("format string", args...);
+KHX_PRINT("format string", args...);
+KHX_PRINTLN("format string", args...);
 ```
 
 ### Backend differences
@@ -93,11 +93,11 @@ Features only available on ACPP:
 
 ### ACPP buffer limit
 
-The output buffer defaults to 128 characters. Output longer than that per `KHR_PRINT` call is silently truncated. Override with:
+The output buffer defaults to 128 characters. Output longer than that per `KHX_PRINT` call is silently truncated. Override with:
 
 ```cpp
-#define KHR_SYCL_PRINT_BUFFER_SIZE 512
-#include "sycl_khr_print.hpp"
+#define KHX_SYCL_PRINT_BUFFER_SIZE 512
+#include "sycl_khx_print.hpp"
 ```
 
 ## Build

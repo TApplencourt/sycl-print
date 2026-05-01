@@ -13,10 +13,10 @@ bool CONCAT(test_, TEST_NAME)() {
     // Mirror that on the std reference so tests can include long output.
 #define PRINT(fmt_str, ...)                                                   \
   std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)                 \
-                   .substr(0, KHR_SYCL_PRINT_BUFFER_SIZE)
+                   .substr(0, KHX_SYCL_PRINT_BUFFER_SIZE)
 #define PRINTLN(fmt_str, ...)                                                 \
   std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)                 \
-                   .substr(0, KHR_SYCL_PRINT_BUFFER_SIZE)                     \
+                   .substr(0, KHX_SYCL_PRINT_BUFFER_SIZE)                     \
             << '\n'
 #else
 #define PRINT(fmt_str, ...) std::cout << std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)
@@ -34,8 +34,8 @@ bool CONCAT(test_, TEST_NAME)() {
   _test_id = 0;
 
   auto sycl_out = capture_stdout([&]() {
-#define PRINT(fmt_str, ...) KHR_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
-#define PRINTLN(fmt_str, ...) KHR_PRINTLN(fmt_str __VA_OPT__(,) __VA_ARGS__)
+#define PRINT(fmt_str, ...) KHX_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
+#define PRINTLN(fmt_str, ...) KHX_PRINTLN(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define RUN(...) do { printf("Test %d\n", ++_test_id); \
   for (int _i = 0; _i < N; _i++) { __VA_ARGS__; } } while (0)
 #include TEST_INC

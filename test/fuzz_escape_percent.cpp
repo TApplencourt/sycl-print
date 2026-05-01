@@ -1,5 +1,5 @@
 // fuzz_escape_percent.cpp — Fuzz tests that can produce % in output.
-// Separated because % escaping favors GPU (see sycl_khr_print.hpp comment).
+// Separated because % escaping favors GPU (see sycl_khx_print.hpp comment).
 
 #ifndef FUZZ_BODY
 #define FUZZ_BODY "fuzz_escape_percent.cpp"
@@ -50,7 +50,7 @@ int main() {
 
   rng_state = SEED;
   auto sycl_out = capture_stdout([&]() {
-#define P(fmt_str, ...) KHR_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
+#define P(fmt_str, ...) KHX_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define RUN(...) q.parallel_for(N, [=](::sycl::id<1>) { __VA_ARGS__; }).wait()
 #include FUZZ_BODY
 #undef RUN

@@ -46,7 +46,7 @@ build/:
 # ── Test binaries (one binary per test × opt level) ─────────
 
 define TEST_template
-build/test_$(1)_$(2): $(TEST_DIR)/test_$(1).cpp $(TEST_HDRS) sycl_khr_print.hpp | build/
+build/test_$(1)_$(2): $(TEST_DIR)/test_$(1).cpp $(TEST_HDRS) sycl_khx_print.hpp | build/
 	@TIMEFORMAT="  compile test_$(1)_$(2): %Rs"; time \
 	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) -$(2) $$(BUFFER_PATH) $$(WA_$(2)) $$< -o $$@
 endef
@@ -55,20 +55,20 @@ $(foreach t,$(TEST_NAMES),$(foreach o,$(OPT_LEVELS),$(eval $(call TEST_template,
 
 # ── Fuzz targets (single binary per opt level) ──────────────
 
-build/fuzz_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/fuzz_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	@TIMEFORMAT="  compile fuzz_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(BUFFER_PATH) $(WA_$*) $< -o $@
 
-build/fuzz_ffast_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/fuzz_ffast_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	@TIMEFORMAT="  compile fuzz_ffast_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(BUFFER_PATH) $(WA_$*) $< -o $@
 
-build/fuzz_escape_percent_%: $(TEST_DIR)/fuzz_escape_percent.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/fuzz_escape_percent_%: $(TEST_DIR)/fuzz_escape_percent.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	@TIMEFORMAT="  compile fuzz_escape_percent_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
 
 # README examples
-build/example_readme%: example_readme%.cpp sycl_khr_print.hpp | build/
+build/example_readme%: example_readme%.cpp sycl_khx_print.hpp | build/
 	@TIMEFORMAT="  compile example_readme$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@
 
@@ -147,22 +147,22 @@ COV_DPC_OBJS  := $(foreach t,$(COV_TESTS),build/cov_dpc_$(t).o) build/cov_dpc_fu
 COV_ACPP_OBJS := $(foreach t,$(COV_TESTS),build/cov_acpp_$(t).o) build/cov_acpp_fuzz.o
 COV_ALL       := build/cov_dpc_all build/cov_acpp_all
 
-build/cov_dpc_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khr_print.hpp | build/
+build/cov_dpc_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_acpp_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khr_print.hpp | build/
+build/cov_acpp_%.o: $(TEST_DIR)/test_%.cpp $(TEST_HDRS) sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST_ACPP -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_dpc_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/cov_dpc_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_acpp_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/cov_acpp_fuzz.o: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST_ACPP -DTEST_NO_MAIN -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_dpc_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/cov_dpc_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST -O2 $(COV_FLAGS) -c $< -o $@
 
-build/cov_acpp_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khr_print.hpp | build/
+build/cov_acpp_main.o: $(TEST_DIR)/test_main_host.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
 	$(CXX) $(CXXFLAGS) -DFMT_SYCL_HOST_ACPP -O2 $(COV_FLAGS) -c $< -o $@
 
 build/cov_dpc_all: build/cov_dpc_main.o $(COV_DPC_OBJS)
@@ -180,7 +180,7 @@ coverage: $(COV_ALL)
 	@$(LLVM_COV) report $(firstword $(COV_ALL)) \
 	  $(addprefix -object ,$(wordlist 2,$(words $(COV_ALL)),$(COV_ALL))) \
 	  -instr-profile=build/coverage.profdata \
-	  -sources sycl_khr_print.hpp
+	  -sources sycl_khx_print.hpp
 	@rm -f build/cov_*.profraw
 
 clean:

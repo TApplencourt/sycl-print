@@ -1,11 +1,11 @@
-// sycl_khr_print.hpp — std::format-like API for SYCL device kernels
+// sycl_khx_print.hpp — std::format-like API for SYCL device kernels
 //
 // Compile-time converts "{}" / "{:spec}" format strings to printf format
 // specifiers, then forwards to sycl::ext::oneapi::experimental::printf.
 //
 // Usage:
-//   sycl::khr::print<"{} + {} = {}">(a, b, c);
-//   KHR_PRINT("{} + {} = {}", a, b, c);   // macro for nicer syntax
+//   sycl::ext::khx::print<"{} + {} = {}">(a, b, c);
+//   KHX_PRINT("{} + {} = {}", a, b, c);   // macro for nicer syntax
 
 #pragma once
 
@@ -35,10 +35,8 @@
 
 
 namespace sycl {
-#if !FMT_SYCL_ACPP && !defined(FMT_SYCL_HOST)
-inline namespace _V1 {
-#endif
-namespace khr {
+namespace ext {
+namespace khx {
 
 namespace print_detail {
 
@@ -779,7 +777,7 @@ template <typename U> inline auto unsigned_int_cast(U arg) {
     return static_cast<unsigned long long>(arg);
 }
 
-// Types supported by sycl::khr::print
+// Types supported by sycl::ext::khx::print
 template <typename T>
 concept sycl_printable = std::same_as<T, bool> || std::same_as<T, char> || std::integral<T> ||
                          std::floating_point<T> || std::is_pointer_v<T>;
@@ -1117,8 +1115,8 @@ struct print_string {
 // Device-side buffer (used by ACPP accumulator path)
 // ============================================================
 
-#ifndef KHR_SYCL_PRINT_BUFFER_SIZE
-#define KHR_SYCL_PRINT_BUFFER_SIZE 128
+#ifndef KHX_SYCL_PRINT_BUFFER_SIZE
+#define KHX_SYCL_PRINT_BUFFER_SIZE 128
 #endif
 
 template <int Cap, int ExtraPad = 0>
@@ -1146,7 +1144,7 @@ struct static_buf {
 
 // Extra 32 bytes let dragonbox write directly into data[len] without a
 // temporary buffer; len is clamped to cap afterwards.
-using fmt_buf = static_buf<KHR_SYCL_PRINT_BUFFER_SIZE, 32>;
+using fmt_buf = static_buf<KHX_SYCL_PRINT_BUFFER_SIZE, 32>;
 
 // Write an unsigned integer in any base into raw (data, len, cap) right-to-left.
 template <int Base, bool Upper = false, typename U>
@@ -2073,17 +2071,15 @@ inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps
 
 #endif // FMT_SYCL_ACPP
 
-} // namespace khr
-#if !FMT_SYCL_ACPP && !defined(FMT_SYCL_HOST)
-} // namespace _V1
-#endif
+} // namespace khx
+} // namespace ext
 } // namespace sycl
 
 // Convenience macro — nicer syntax without explicit template angle brackets
 #if FMT_SYCL_ACPP
-#define KHR_PRINT(fmtstr, ...) ::sycl::khr::print(fmtstr __VA_OPT__(,) __VA_ARGS__)
-#define KHR_PRINTLN(fmtstr, ...) ::sycl::khr::println(fmtstr __VA_OPT__(,) __VA_ARGS__)
+#define KHX_PRINT(fmtstr, ...) ::sycl::ext::khx::print(fmtstr __VA_OPT__(,) __VA_ARGS__)
+#define KHX_PRINTLN(fmtstr, ...) ::sycl::ext::khx::println(fmtstr __VA_OPT__(,) __VA_ARGS__)
 #else
-#define KHR_PRINT(fmtstr, ...) ::sycl::khr::print<fmtstr>(__VA_ARGS__)
-#define KHR_PRINTLN(fmtstr, ...) ::sycl::khr::println<fmtstr>(__VA_ARGS__)
+#define KHX_PRINT(fmtstr, ...) ::sycl::ext::khx::print<fmtstr>(__VA_ARGS__)
+#define KHX_PRINTLN(fmtstr, ...) ::sycl::ext::khx::println<fmtstr>(__VA_ARGS__)
 #endif

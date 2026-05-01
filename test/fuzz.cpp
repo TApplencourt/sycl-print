@@ -1,6 +1,6 @@
 // fuzz.cpp — Deterministic fuzzer for fmt-sycl
 // Single binary: runs each format spec through both std::format and
-// sycl::khr::print with identical PRNG seeds, then diffs the output.
+// sycl::ext::khx::print with identical PRNG seeds, then diffs the output.
 // The SYCL path submits kernels via parallel_for, like the other tests.
 
 #ifndef FUZZ_BODY
@@ -57,7 +57,7 @@ bool test_fuzz() {
 
   rng_state = SEED;
   auto sycl_out = capture_stdout([&]() {
-#define P(fmt_str, ...) KHR_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
+#define P(fmt_str, ...) KHX_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define RUN(...) for (int _r = 0; _r < N; _r++) { __VA_ARGS__; }
 #include FUZZ_BODY
 #undef RUN
@@ -86,7 +86,7 @@ int main() {
 
   rng_state = SEED;
   auto sycl_out = capture_stdout([&]() {
-#define P(fmt_str, ...) KHR_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
+#define P(fmt_str, ...) KHX_PRINT(fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define RUN(...) q.parallel_for(N, [=](::sycl::id<1>) { __VA_ARGS__; }).wait()
 #include FUZZ_BODY
 #undef RUN
