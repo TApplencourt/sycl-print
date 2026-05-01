@@ -1915,31 +1915,33 @@ inline void write_arg_rt(fmt_buf &out, T arg, const format_spec &spec, int dyn_w
 }
 
 // ============================================================
-// Runtime tuple dispatch + format loop
+// Runtime pack dispatch + format loop
 // ============================================================
-
-template <typename Tuple, typename F, size_t... Is>
-inline void dispatch_by_index(const Tuple &t, int idx, F &&fn, std::index_sequence<Is...>) {
-  ((static_cast<int>(Is) == idx ? (fn(std::get<Is>(t)), void()) : void()), ...);
+// dispatch_pack folds over the args pack directly.
+template <typename F, typename... Args>
+inline void dispatch_pack(int idx, F &&fn, Args &&... args) {
+  int i = 0;
+  (((i++ == idx) ? (fn(args), void()) : void()), ...);
 }
 
 template <typename... Args>
-inline void resolve_int_arg(const std::tuple<Args...> &all_args, int idx, int &out) {
-  dispatch_by_index(all_args, idx,
+inline void resolve_int_arg(int idx, int &out, Args... args) {
+  dispatch_pack(idx,
     [&out](auto val) {
       if constexpr (std::integral<std::decay_t<decltype(val)>>)
         out = static_cast<int>(val);
-    }, std::index_sequence_for<Args...>{});
+    }, args...);
 }
 
 template <typename... Args>
-inline void dispatch_arg(fmt_buf &out, const std::tuple<Args...> &all_args,
-                         int idx, bool has_spec, const format_spec &spec, int dyn_w, int dyn_p) {
-  dispatch_by_index(all_args, idx,
+inline void dispatch_arg(fmt_buf &out, int idx, bool has_spec,
+                         const format_spec &spec, int dyn_w, int dyn_p,
+                         Args... args) {
+  dispatch_pack(idx,
     [&](auto arg) {
       if (has_spec) write_arg_rt(out, arg, spec, dyn_w, dyn_p);
       else write_arg_default(out, arg);
-    }, std::index_sequence_for<Args...>{});
+    }, args...);
 }
 
 inline void write_literal_segment(fmt_buf &out, const char *str, int from, int to) {
@@ -1951,16 +1953,15 @@ inline void write_literal_segment(fmt_buf &out, const char *str, int from, int t
 }
 
 template <sycl_printable... Args>
-inline void format_rt(fmt_buf &out, const print_string<Args...> &ps,
-                      const std::tuple<Args...> &all_args) {
+inline void format_rt(fmt_buf &out, const print_string<Args...> &ps, Args... args) {
   int pos = 0;
   for (int i = 0; i < ps.ph_count; i++) {
     const auto &e = ps.phs[i];
     write_literal_segment(out, ps.str, pos, e.open);
     int dyn_w = e.spec.width, dyn_p = e.spec.precision;
-    if (e.spec.width_arg >= 0) resolve_int_arg(all_args, e.spec.width_arg, dyn_w);
-    if (e.spec.prec_arg >= 0)  resolve_int_arg(all_args, e.spec.prec_arg, dyn_p);
-    dispatch_arg(out, all_args, e.arg_idx, e.has_spec, e.spec, dyn_w, dyn_p);
+    if (e.spec.width_arg >= 0) resolve_int_arg(e.spec.width_arg, dyn_w, args...);
+    if (e.spec.prec_arg >= 0)  resolve_int_arg(e.spec.prec_arg,  dyn_p, args...);
+    dispatch_arg(out, e.arg_idx, e.has_spec, e.spec, dyn_w, dyn_p, args...);
     pos = e.close + 1;
   }
   write_literal_segment(out, ps.str, pos, ps.len);
@@ -2058,14 +2059,14 @@ inline void println(Args... args) {
 template <print_detail::sycl_printable... Args>
 inline void print(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
   print_detail::fmt_buf out;
-  print_detail::buffer_path::format_rt(out, ps, std::tuple<Args...>(args...));
+  print_detail::buffer_path::format_rt(out, ps, args...);
   print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
 
 template <print_detail::sycl_printable... Args>
 inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
   print_detail::fmt_buf out;
-  print_detail::buffer_path::format_rt(out, ps, std::tuple<Args...>(args...));
+  print_detail::buffer_path::format_rt(out, ps, args...);
   out.push('\n');
   print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
