@@ -647,64 +647,13 @@ struct placeholder_info {
   int index; // -1 = auto ({}), >=0 = positional ({N})
 };
 
-// Find the first {} or {:spec} or {N} or {N:spec} placeholder
+// Forward decl — defined alongside the other runtime helpers below.
+constexpr placeholder_info find_placeholder_rt(const char *s, int len, int from);
+
+// NTTP wrapper: same algorithm, just calls the runtime version on Fmt.data.
+// Both are evaluated at compile time when invoked from a consteval context.
 template <fixed_string Fmt, size_t From = 0> consteval placeholder_info find_placeholder() {
-  constexpr size_t len = flen(Fmt);
-  size_t i = From;
-  while (i < len) {
-    if (Fmt[i] == '{') {
-      if (i + 1 < len && Fmt[i + 1] == '{') {
-        i += 2;
-        continue;
-      }
-      // Found start of placeholder — parse index then spec
-      size_t j = i + 1;
-      int index = -1; // auto by default
-
-      // Parse optional numeric index
-      if (j < len && Fmt[j] >= '0' && Fmt[j] <= '9') {
-        index = 0;
-        while (j < len && Fmt[j] >= '0' && Fmt[j] <= '9') {
-          index = index * 10 + (Fmt[j] - '0');
-          j++;
-        }
-      }
-
-      // Parse optional :spec — skip nested {} for dynamic width/prec
-      bool has_spec = false;
-      size_t spec_beg = j;
-      if (j < len && Fmt[j] == ':') {
-        has_spec = true;
-        spec_beg = j + 1;
-        j++;
-        int depth = 0;
-        while (j < len) {
-          if (Fmt[j] == '{')
-            depth++;
-          else if (Fmt[j] == '}') {
-            if (depth == 0)
-              break;
-            depth--;
-          }
-          j++;
-        }
-      }
-      // j now points at '}' (or end)
-      size_t close = j;
-      if (!has_spec)
-        spec_beg = close;
-      return {i, close, spec_beg, has_spec, true, index};
-    } else if (Fmt[i] == '}') {
-      if (i + 1 < len && Fmt[i + 1] == '}') {
-        i += 2;
-        continue;
-      }
-      i++;
-    } else {
-      i++;
-    }
-  }
-  return {0, 0, 0, false, false, -1};
+  return find_placeholder_rt(Fmt.data, static_cast<int>(flen(Fmt)), static_cast<int>(From));
 }
 
 // ============================================================
@@ -871,105 +820,34 @@ constexpr int parse_dynamic_arg(const char *data, size_t len, size_t &i, int &au
   return idx;
 }
 
+// Forward decl — defined alongside the other runtime helpers below.
+constexpr format_spec parse_spec_rt(const char *data, int begin, int end,
+                                    int dyn_auto_start);
+
+// NTTP wrapper: same algorithm, just calls the runtime version on Fmt.data.
 template <fixed_string Fmt, size_t Begin, size_t End, int DynAutoStart = -1>
 consteval format_spec parse_spec() {
-  format_spec s{};
-  size_t i = Begin;
-  int dyn_auto = DynAutoStart; // auto-index counter for dynamic args
-
-  // [[fill]align]
-  if (i + 1 < End && is_align_char(Fmt[i + 1])) {
-    s.fill = Fmt[i];
-    s.align = Fmt[i + 1];
-    i += 2;
-  } else if (i < End && is_align_char(Fmt[i])) {
-    s.align = Fmt[i];
-    i++;
-  }
-
-  // [sign]
-  if (i < End && (Fmt[i] == '+' || Fmt[i] == '-' || Fmt[i] == ' ')) {
-    s.sign = Fmt[i];
-    i++;
-  }
-
-  // [#]
-  if (i < End && Fmt[i] == '#') {
-    s.alt = true;
-    i++;
-  }
-
-  // [0]
-  if (i < End && Fmt[i] == '0') {
-    s.zero_pad = true;
-    i++;
-  }
-
-  // [width] — static digits or dynamic {N}/{}
-  if (i < End && Fmt[i] == '{') {
-    s.width_arg = parse_dynamic_arg(Fmt.data, End, i, dyn_auto);
-  } else {
-    while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
-      s.width = s.width * 10 + (Fmt[i] - '0');
-      i++;
-    }
-  }
-
-  // [.precision] — static digits or dynamic {N}/{}
-  if (i < End && Fmt[i] == '.') {
-    i++;
-    s.precision = 0;
-    if (i < End && Fmt[i] == '{') {
-      s.prec_arg = parse_dynamic_arg(Fmt.data, End, i, dyn_auto);
-      s.precision = -1; // will be resolved at runtime
-    } else {
-      while (i < End && Fmt[i] >= '0' && Fmt[i] <= '9') {
-        s.precision = s.precision * 10 + (Fmt[i] - '0');
-        i++;
-      }
-    }
-  }
-
-  // [type]
-  if (i < End && is_type_char(Fmt[i])) {
-    s.type = Fmt[i];
-  }
-
-  // Count auto dynamic args consumed
-  s.dyn_count = (dyn_auto >= 0 && DynAutoStart >= 0) ? (dyn_auto - DynAutoStart) : 0;
-
-  return s;
+  return parse_spec_rt(Fmt.data, static_cast<int>(Begin), static_cast<int>(End),
+                       DynAutoStart);
 }
 
-// Effective printf type char given the spec and the C++ argument type
+// Forward decl — defined alongside the other runtime helpers below.
+template <typename U> constexpr char effective_type_rt(char spec_type);
+
+// Effective printf type char given the spec and the C++ argument type.
+// NTTP wrapper over effective_type_rt — same algorithm, no duplication.
 template <typename U, char SpecType> consteval char effective_type() {
-  if (SpecType != '\0')
-    return SpecType;
-  if constexpr (std::same_as<U, bool>)
-    return 's';
-  else if constexpr (std::same_as<U, char>)
-    return 'c';
-  else if constexpr (std::floating_point<U>)
-    return 'g';
-  else if constexpr (std::signed_integral<U>)
-    return 'd';
-  else if constexpr (std::unsigned_integral<U>)
-    return 'u';
-  else if constexpr (std::is_pointer_v<U>) {
-    using P = std::remove_cv_t<std::remove_pointer_t<U>>;
-    if constexpr (std::same_as<P, char>)
-      return 's';
-    else
-      return 'p';
-  }
+  return effective_type_rt<U>(SpecType);
 }
 
-#if FMT_SYCL_ACPP
 // ============================================================
-// Runtime parsing + print_string (ACPP only)
+// Runtime placeholder + spec parsing
 // ============================================================
+// Both backends use these. The consteval NTTP wrappers above (find_placeholder,
+// parse_spec) just call into these — same algorithm, no duplication. ACPP also
+// uses them at runtime via print_string's consteval ctor and the inner walker.
 
-// Runtime version of find_placeholder — works on const char* instead of fixed_string NTTP
+// Find the first {} or {:spec} or {N} or {N:spec} placeholder in s[from..len).
 constexpr placeholder_info find_placeholder_rt(const char *s, int len, int from) {
   int i = from;
   while (i < len) {
@@ -1076,6 +954,11 @@ consteval bool type_can_produce_pct() {
   else if constexpr (sycl_printable<U>) return false;
   else return true; // formatter args — be conservative; sub-string may contain '%'
 }
+
+#if FMT_SYCL_ACPP
+// ============================================================
+// print_string — consteval-validated format string for ACPP
+// ============================================================
 
 // Pre-parsed placeholder entry — populated at compile time, consumed at runtime.
 struct ph_entry {
