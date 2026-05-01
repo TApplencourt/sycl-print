@@ -117,8 +117,7 @@ KHX_PRINTLNF("position = {}", vec3{1.0f, 2.0f, 3.0f});
 When at least one arg has a custom formatter, the format string must use
 auto-indexed `{}` placeholders only — positional indices (`{0}`, `{1}`)
 and format specs (`{:>5}`) on the custom-formatter arg are rejected at
-compile time. Use `KHX_PRINT` instead if you need those features with
-purely primitive args.
+compile time. Calls with all-primitive args are unaffected.
 
 ### Backend differences
 
