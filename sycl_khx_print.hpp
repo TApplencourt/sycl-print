@@ -1961,17 +1961,6 @@ inline void resolve_int_arg(int idx, int &out, Args... args) {
     }, args...);
 }
 
-template <typename... Args>
-inline void dispatch_arg(fmt_buf &out, int idx, bool has_spec,
-                         const format_spec &spec, int dyn_w, int dyn_p,
-                         Args... args) {
-  dispatch_pack(idx,
-    [&](auto arg) {
-      if (has_spec) write_arg_rt(out, arg, spec, dyn_w, dyn_p);
-      else write_arg_default(out, arg);
-    }, args...);
-}
-
 inline void write_literal_segment(fmt_buf &out, const char *str, int from, int to) {
   for (int i = from; i < to;) {
     if (i + 1 < to && str[i] == '{' && str[i + 1] == '{') { out.push('{'); i += 2; }
@@ -1980,7 +1969,41 @@ inline void write_literal_segment(fmt_buf &out, const char *str, int from, int t
   }
 }
 
-template <sycl_printable... Args>
+// Forward decl: the literal-walking format loop is needed by dispatch_arg
+// (for formatter inner sub-strings) but its definition wants dispatch_arg.
+template <sycl_formattable... Args>
+inline void format_lit_rt(fmt_buf &out, const char *fmt, int fmt_len, Args... args);
+
+// Per-arg dispatch. Primitives use the spec-aware writers; formatter args
+// recurse into format_lit_rt on the formatter's inner format string + values.
+// Both branches are if-constexpr so the primitive path stays byte-identical.
+template <typename... Args>
+inline void dispatch_arg(fmt_buf &out, int idx, bool has_spec,
+                         const format_spec &spec, int dyn_w, int dyn_p,
+                         Args... args) {
+  dispatch_pack(idx,
+    [&]<typename T>(T arg) {
+      if constexpr (sycl_printable<std::decay_t<T>>) {
+        if (has_spec) write_arg_rt(out, arg, spec, dyn_w, dyn_p);
+        else write_arg_default(out, arg);
+      } else {
+        // has_formatter<T> — specs/dynamic-width on custom args are not
+        // supported on ACPP at runtime; the inner format literal is rewalked.
+        auto inner = ::sycl::ext::khx::formatter<std::decay_t<T>>::format(arg);
+        constexpr auto inner_fmt = decltype(inner)::format_string;
+        std::apply(
+            [&](auto... vs) {
+              format_lit_rt(out, inner_fmt.data, static_cast<int>(flen(inner_fmt)), vs...);
+            },
+            inner.values);
+      }
+    }, args...);
+}
+
+// Top-level walker. Reuses the pre-parsed phs[] for the outer format string
+// (so spec handling for primitives is unchanged) and falls through to
+// dispatch_arg for both primitive and formatter args.
+template <sycl_formattable... Args>
 inline void format_rt(fmt_buf &out, const print_string<Args...> &ps, Args... args) {
   int pos = 0;
   for (int i = 0; i < ps.ph_count; i++) {
@@ -1995,51 +2018,23 @@ inline void format_rt(fmt_buf &out, const print_string<Args...> &ps, Args... arg
   write_literal_segment(out, ps.str, pos, ps.len);
 }
 
-// ============================================================
-// Formatter-aware runtime format loop
-// ============================================================
-// Used by the ACPP value-style print/println when at least one arg has a
-// custom formatter<T>. Iterates the same pre-parsed phs[] as format_rt, but
-// for each placeholder dispatches at runtime: primitives go through the
-// existing writers; formatter args are recursively expanded by calling
-// formatter<T>::format(arg) and re-entering format_pack_rt on the inner
-// format string + inner values tuple.
-
-// Walks a raw format literal and dispatches each placeholder against `args`.
-// At each placeholder: primitive arg → write_arg_default; formatter arg →
-// call formatter<T>::format(arg) and recurse on the inner format string +
-// inner values tuple. Re-entered both at top level (outer format from
-// print_string) and recursively for nested formatters.
+// Inner walker for formatter sub-strings. These don't have a print_string
+// (no compile-time pre-parse), so we re-parse with find_placeholder_rt.
+// No spec/dyn-width support here — Stage 1 forbids them on custom args.
 template <sycl_formattable... Args>
-inline void format_pack_rt(fmt_buf &out, const char *fmt, int fmt_len, Args... args) {
+inline void format_lit_rt(fmt_buf &out, const char *fmt, int fmt_len, Args... args) {
   int pos = 0;
   int auto_idx = 0;
+  format_spec empty{};
   while (true) {
     auto info = find_placeholder_rt(fmt, fmt_len, pos);
     if (!info.found) break;
     write_literal_segment(out, fmt, pos, static_cast<int>(info.open));
     int idx = (info.index >= 0) ? info.index : auto_idx++;
-    dispatch_pack(idx, [&]<typename T>(T arg) {
-      if constexpr (sycl_printable<std::decay_t<T>>) {
-        write_arg_default(out, arg);
-      } else {
-        auto inner = ::sycl::ext::khx::formatter<std::decay_t<T>>::format(arg);
-        constexpr auto inner_fmt = decltype(inner)::format_string;
-        std::apply(
-            [&](auto... vs) {
-              format_pack_rt(out, inner_fmt.data, static_cast<int>(flen(inner_fmt)), vs...);
-            },
-            inner.values);
-      }
-    }, args...);
+    dispatch_arg(out, idx, /*has_spec*/ false, empty, /*dyn_w*/ 0, /*dyn_p*/ -1, args...);
     pos = static_cast<int>(info.close) + 1;
   }
   write_literal_segment(out, fmt, pos, fmt_len);
-}
-
-template <sycl_formattable... Args>
-inline void format_pack_rt(fmt_buf &out, const print_string<Args...> &ps, Args... args) {
-  format_pack_rt(out, ps.str, ps.len, args...);
 }
 
 // Flush buf: escape % → %% then output.
@@ -2089,9 +2084,9 @@ inline void flush_buf(fmt_buf &out, bool escape_pct = true) {
 // ============================================================
 // formatter_expand — splice user `formatter<T>` results into
 // the parent format string + arg pack at compile time. DPC++
-// only: the value-style entry point on ACPP runs the splicer at
-// runtime via buffer_path::format_pack_rt instead, so this
-// machinery would be dead weight there.
+// only: ACPP dispatches formatter args at runtime inside
+// buffer_path::dispatch_arg, so this machinery would be dead
+// weight there.
 // ============================================================
 
 #if !FMT_SYCL_ACPP
@@ -2320,31 +2315,21 @@ inline void println(Args... args) {
 // ACPP path: keep the value-style public API
 //   sycl::ext::khx::println("…", args…)
 // for both primitive and formatter args. The format literal is captured by
-// print_string's consteval ctor (so no NTTP at the call site) and the
-// runtime walker dispatches per arg via if constexpr on sycl_printable<T>.
-namespace print_detail {
-template <sycl_formattable... Args>
-inline void format_into(fmt_buf &out, const print_string<std::type_identity_t<Args>...> &ps,
-                        Args... args) {
-  if constexpr ((sycl_printable<std::decay_t<Args>> && ...)) {
-    buffer_path::format_rt(out, ps, args...);
-  } else {
-    buffer_path::format_pack_rt(out, ps, args...);
-  }
-}
-} // namespace print_detail
-
+// print_string's consteval ctor (so no NTTP at the call site). format_rt
+// now dispatches both primitive and formatter args via if constexpr — the
+// primitive path stays byte-identical, formatter args recurse into the
+// inner walker on the formatter's sub-format-string.
 template <sycl_formattable... Args>
 inline void print(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
   print_detail::fmt_buf out;
-  print_detail::format_into(out, ps, args...);
+  print_detail::buffer_path::format_rt(out, ps, args...);
   print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
 
 template <sycl_formattable... Args>
 inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps, Args... args) {
   print_detail::fmt_buf out;
-  print_detail::format_into(out, ps, args...);
+  print_detail::buffer_path::format_rt(out, ps, args...);
   out.push('\n');
   print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
