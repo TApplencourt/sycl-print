@@ -47,6 +47,7 @@ build/:
 
 define TEST_template
 build/test_$(1)_$(2): $(TEST_DIR)/test_$(1).cpp $(TEST_HDRS) sycl_khx_print.hpp | build/
+	@echo "$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) -$(2) $$(BUFFER_PATH) $$(WA_$(2)) $$< -o $$@"
 	@TIMEFORMAT="  compile test_$(1)_$(2): %Rs"; time \
 	$$(CXX) $$(CXXFLAGS) $$(SYCLFLAGS) -$(2) $$(BUFFER_PATH) $$(WA_$(2)) $$< -o $$@
 endef
@@ -56,19 +57,35 @@ $(foreach t,$(TEST_NAMES),$(foreach o,$(OPT_LEVELS),$(eval $(call TEST_template,
 # ── Fuzz targets (single binary per opt level) ──────────────
 
 build/fuzz_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
+	@echo "$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(BUFFER_PATH) $(WA_$*) $< -o $@"
 	@TIMEFORMAT="  compile fuzz_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(BUFFER_PATH) $(WA_$*) $< -o $@
 
 build/fuzz_ffast_%: $(TEST_DIR)/fuzz.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
+	@echo "$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(BUFFER_PATH) $(WA_$*) $< -o $@"
 	@TIMEFORMAT="  compile fuzz_ffast_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* -ffast-math $(BUFFER_PATH) $(WA_$*) $< -o $@
 
 build/fuzz_escape_percent_%: $(TEST_DIR)/fuzz_escape_percent.cpp $(TEST_DIR)/capture.hpp sycl_khx_print.hpp | build/
+	@echo "$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@"
 	@TIMEFORMAT="  compile fuzz_escape_percent_$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) -$* $(WA_$*) $< -o $@
 
+# acpp/clang heap-corrupts ("malloc(): invalid next size") when several heavy
+# fuzz.cpp instantiations link concurrently. Chain fuzz binaries so each
+# waits for the previous one — make -j still parallelizes everything else.
+# Use order-only prereqs (after `|`) so timestamps don't trigger unnecessary
+# rebuilds; we only want serialized build order, not a real dependency.
+ifdef USE_ACPP
+ALL_FUZZ := $(FUZZ_BINS) $(FUZZ_FM) $(FUZZ_PCT)
+PREV_FUZZ := $(wordlist 1,$(words $(ALL_FUZZ)),x $(ALL_FUZZ))
+$(foreach i,$(shell seq 2 $(words $(ALL_FUZZ))),\
+  $(eval $(word $(i),$(ALL_FUZZ)): | $(word $(i),$(PREV_FUZZ))))
+endif
+
 # README examples
 build/example_readme%: example_readme%.cpp sycl_khx_print.hpp | build/
+	@echo "$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@"
 	@TIMEFORMAT="  compile example_readme$*: %Rs"; time \
 	$(CXX) $(CXXFLAGS) $(SYCLFLAGS) $< -o $@
 
