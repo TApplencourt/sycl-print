@@ -782,6 +782,35 @@ template <typename T>
 concept sycl_printable = std::same_as<T, bool> || std::same_as<T, char> || std::integral<T> ||
                          std::floating_point<T> || std::is_pointer_v<T>;
 
+} // namespace print_detail
+
+// ============================================================
+// Customization point: formatter<T>
+// Users specialize sycl::ext::khx::formatter<T> to teach the
+// library how to print a custom type. The specialization must
+// expose a static `format(T)` returning a `formatted<Fmt, ...>`
+// where Fmt is a compile-time format string and the values
+// reduce, after recursive expansion, to sycl_printable types.
+// ============================================================
+
+template <print_detail::fixed_string Fmt, typename... Args>
+struct formatted {
+  static constexpr auto format_string = Fmt;
+  std::tuple<Args...> values;
+};
+
+template <typename T> struct formatter; // primary, intentionally undefined
+
+template <typename T>
+concept has_formatter = requires(T v) {
+  { formatter<std::decay_t<T>>::format(v) };
+};
+
+template <typename T>
+concept sycl_formattable = print_detail::sycl_printable<T> || has_formatter<T>;
+
+namespace print_detail {
+
 // ============================================================
 // Format spec parsing and printf format string generation
 // ============================================================
@@ -2010,6 +2039,195 @@ inline void flush_buf(fmt_buf &out, bool escape_pct = true) {
 
 
 // ============================================================
+// formatter_expand — splice user `formatter<T>` results into
+// the parent format string + arg pack at compile time. Both
+// backends consume only primitives, so this is the single
+// hook that teaches them about custom types.
+// ============================================================
+
+namespace print_detail {
+namespace formatter_expand {
+
+// Per-arg post-one-round tuple type: primitive stays as-is, formatter expands to its values.
+// Specialize on the primitive vs custom case so the unused branch never instantiates
+// formatter<T> for primitive T.
+template <typename T, bool IsPrim = sycl_printable<T>> struct per_arg_round;
+template <typename T> struct per_arg_round<T, true> {
+  using type = std::tuple<T>;
+};
+template <typename T> struct per_arg_round<T, false> {
+  using type = decltype(formatter<std::decay_t<T>>::format(std::declval<T>()).values);
+};
+
+template <typename... Args>
+using expand_args_round_t =
+    decltype(std::tuple_cat(std::declval<typename per_arg_round<Args>::type>()...));
+
+// Inner format string of a custom formatter (only valid when has_formatter<T>).
+template <typename T>
+inline constexpr auto inner_format_string =
+    decltype(formatter<std::decay_t<T>>::format(std::declval<T>()))::format_string;
+
+template <typename... Args>
+consteval bool all_primitive() {
+  return (... && sycl_printable<std::decay_t<Args>>);
+}
+
+template <typename... Args>
+consteval bool any_has_formatter() {
+  return (... || has_formatter<std::decay_t<Args>>);
+}
+
+// Scan Fmt for any positional ({N}) placeholder.
+template <fixed_string Fmt, size_t Pos = 0> consteval bool any_positional() {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    return false;
+  } else if constexpr (info.index >= 0) {
+    return true;
+  } else {
+    return any_positional<Fmt, info.close + 1>();
+  }
+}
+
+// Scan Fmt; for each placeholder mapping to a has_formatter arg, ensure no spec.
+template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
+consteval bool no_spec_on_custom() {
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    return true;
+  } else {
+    using U = std::decay_t<std::tuple_element_t<AutoIdx, std::tuple<Args...>>>;
+    if constexpr (has_formatter<U>) {
+      if constexpr (info.has_spec && info.close > info.spec_beg) return false;
+    }
+    return no_spec_on_custom<Fmt, info.close + 1, AutoIdx + 1, Args...>();
+  }
+}
+
+// Single-round splicer. out=nullptr → measure; non-null → write.
+// For each placeholder: primitive → copy "{...}" verbatim;
+// has_formatter → splice the inner fixed_string body in place of "{...}".
+template <fixed_string Fmt, size_t Pos, size_t AutoIdx, typename... Args>
+consteval size_t walk_expand(char *out, size_t op = 0) {
+  constexpr size_t len = flen(Fmt);
+  constexpr auto info = find_placeholder<Fmt, Pos>();
+  if constexpr (!info.found) {
+    if (out) {
+      for (size_t i = Pos; i < len; i++) out[op + (i - Pos)] = Fmt[i];
+    }
+    return op + (len - Pos);
+  } else {
+    if (out) {
+      for (size_t i = Pos; i < info.open; i++) out[op + (i - Pos)] = Fmt[i];
+    }
+    op += info.open - Pos;
+    using U = std::decay_t<std::tuple_element_t<AutoIdx, std::tuple<Args...>>>;
+    if constexpr (sycl_printable<U>) {
+      if (out) {
+        for (size_t i = info.open; i <= info.close; i++)
+          out[op + (i - info.open)] = Fmt[i];
+      }
+      op += (info.close - info.open + 1);
+    } else {
+      constexpr auto inner = inner_format_string<U>;
+      constexpr size_t inner_len = flen(inner);
+      if (out) {
+        for (size_t i = 0; i < inner_len; i++) out[op + i] = inner.data[i];
+      }
+      op += inner_len;
+    }
+    return walk_expand<Fmt, info.close + 1, AutoIdx + 1, Args...>(out, op);
+  }
+}
+
+template <fixed_string Fmt, typename... Args>
+consteval auto expand_format_one_round() {
+  constexpr size_t N = walk_expand<Fmt, 0, 0, Args...>(nullptr) + 1; // +1 for '\0'
+  fixed_string<N> result{};
+  walk_expand<Fmt, 0, 0, Args...>(result.data);
+  result.data[N - 1] = '\0';
+  return result;
+}
+
+// Compile-time fixed-point on (Fmt, Args...).
+template <fixed_string Fmt, int Depth, typename... Args>
+consteval auto expand_format_full();
+
+template <fixed_string Fmt, int Depth, typename Tup, size_t... Is>
+consteval auto expand_format_full_apply(std::index_sequence<Is...>) {
+  return expand_format_full<Fmt, Depth, std::tuple_element_t<Is, Tup>...>();
+}
+
+template <fixed_string Fmt, int Depth, typename... Args>
+consteval auto expand_format_full() {
+  static_assert(Depth < 8,
+                "formatter expansion exceeded depth limit; check for cycles in formatter<T>");
+  if constexpr (all_primitive<Args...>()) {
+    return Fmt;
+  } else {
+    if constexpr (Depth == 0) {
+      static_assert(!any_positional<Fmt>(),
+                    "positional indices ({0}, {1}, ...) are not allowed in format strings "
+                    "that contain custom-formatter args; use auto-indexed {} placeholders");
+      static_assert(no_spec_on_custom<Fmt, 0, 0, std::decay_t<Args>...>(),
+                    "format spec ({:...}) on a custom-formatter arg is not supported");
+    }
+    constexpr auto Fmt2 = expand_format_one_round<Fmt, std::decay_t<Args>...>();
+    using NewTup = expand_args_round_t<std::decay_t<Args>...>;
+    return expand_format_full_apply<Fmt2, Depth + 1, NewTup>(
+        std::make_index_sequence<std::tuple_size_v<NewTup>>{});
+  }
+}
+
+// Runtime per-arg expansion: primitive → tuple{a}; formatter → its .values tuple.
+template <typename T>
+constexpr auto per_arg_expand_rt(T arg) {
+  if constexpr (sycl_printable<std::decay_t<T>>) {
+    return std::tuple<std::decay_t<T>>{arg};
+  } else {
+    return formatter<std::decay_t<T>>::format(arg).values;
+  }
+}
+
+template <typename... Args>
+constexpr auto expand_args_round_rt(Args... args) {
+  return std::tuple_cat(per_arg_expand_rt(args)...);
+}
+
+// Runtime fixed-point: matches the type-level recursion of expand_format_full.
+template <typename... Args>
+constexpr auto expand_args_full_rt(Args... args) {
+  if constexpr (all_primitive<Args...>()) {
+    return std::tuple<std::decay_t<Args>...>{args...};
+  } else {
+    return std::apply([](auto... a) { return expand_args_full_rt(a...); },
+                      expand_args_round_rt(args...));
+  }
+}
+
+// Forward to the public print<Fmt>(args...) by unpacking a tuple of expanded args.
+// Kept as a free function (not a lambda) so Fmt2 can be used as an NTTP without
+// the C++ "captureless lambda + non-type template param" pitfall that clang flags.
+template <fixed_string Fmt2, typename Tup, size_t... Is>
+inline void apply_print(Tup &t, std::index_sequence<Is...>);
+
+} // namespace formatter_expand
+
+template <fixed_string Fmt> consteval auto append_newline() {
+  constexpr size_t len = flen(Fmt);
+  fixed_string<len + 2> result; // +1 for '\n', +1 for '\0'
+  for (size_t i = 0; i < len; ++i)
+    result.data[i] = Fmt[i];
+  result.data[len] = '\n';
+  result.data[len + 1] = '\0';
+  return result;
+}
+
+} // namespace print_detail
+
+
+// ============================================================
 // Public API
 // ============================================================
 
@@ -2035,19 +2253,24 @@ inline void print(Args... args) {
   }
 }
 
-namespace print_detail {
-template <fixed_string Fmt> consteval auto append_newline() {
-  constexpr size_t len = flen(Fmt);
-  fixed_string<len + 2> result; // +1 for '\n', +1 for '\0'
-  for (size_t i = 0; i < len; ++i)
-    result.data[i] = Fmt[i];
-  result.data[len] = '\n';
-  result.data[len + 1] = '\0';
-  return result;
-}
-} // namespace print_detail
-
 template <print_detail::fixed_string Fmt, print_detail::sycl_printable... Args>
+inline void println(Args... args) {
+  print<print_detail::append_newline<Fmt>()>(args...);
+}
+
+// Formatter-aware overloads — selected when at least one arg has a custom formatter<T>.
+template <print_detail::fixed_string Fmt, sycl_formattable... Args>
+  requires (!(print_detail::sycl_printable<std::decay_t<Args>> && ...))
+inline void print(Args... args) {
+  constexpr auto Fmt2 =
+      print_detail::formatter_expand::expand_format_full<Fmt, 0, std::decay_t<Args>...>();
+  auto values = print_detail::formatter_expand::expand_args_full_rt(args...);
+  print_detail::formatter_expand::apply_print<Fmt2>(
+      values, std::make_index_sequence<std::tuple_size_v<decltype(values)>>{});
+}
+
+template <print_detail::fixed_string Fmt, sycl_formattable... Args>
+  requires (!(print_detail::sycl_printable<std::decay_t<Args>> && ...))
 inline void println(Args... args) {
   print<print_detail::append_newline<Fmt>()>(args...);
 }
@@ -2069,11 +2292,145 @@ inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps
   print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
 }
 
+// NTTP-form overload used by KHX_PRINTF on ACPP. Accepts both pure-primitive
+// and formatter-using arg packs; routes through the existing buffer path
+// (via print_string) once expansion is complete.
+template <print_detail::fixed_string Fmt, sycl_formattable... Args>
+inline void print(Args... args) {
+  if constexpr ((print_detail::sycl_printable<std::decay_t<Args>> && ...)) {
+    print_detail::print_string<std::decay_t<Args>...> ps{Fmt.data};
+    print_detail::fmt_buf out;
+    print_detail::buffer_path::format_rt(out, ps, args...);
+    print_detail::buffer_path::flush_buf(out, ps.needs_pct_escape);
+  } else {
+    constexpr auto Fmt2 =
+        print_detail::formatter_expand::expand_format_full<Fmt, 0, std::decay_t<Args>...>();
+    auto values = print_detail::formatter_expand::expand_args_full_rt(args...);
+    print_detail::formatter_expand::apply_print<Fmt2>(
+        values, std::make_index_sequence<std::tuple_size_v<decltype(values)>>{});
+  }
+}
+
+template <print_detail::fixed_string Fmt, sycl_formattable... Args>
+inline void println(Args... args) {
+  print<print_detail::append_newline<Fmt>()>(args...);
+}
+
 #endif // FMT_SYCL_ACPP
 
 } // namespace khx
 } // namespace ext
 } // namespace sycl
+
+// Definition of the apply_print helper forward-declared above.
+// Lives outside the public API section because it calls back into
+// sycl::ext::khx::print<Fmt2>(...) which must already be declared.
+namespace sycl::ext::khx::print_detail::formatter_expand {
+template <::sycl::ext::khx::print_detail::fixed_string Fmt2, typename Tup, size_t... Is>
+inline void apply_print(Tup &t, std::index_sequence<Is...>) {
+  ::sycl::ext::khx::print<Fmt2>(std::get<Is>(t)...);
+}
+} // namespace sycl::ext::khx::print_detail::formatter_expand
+
+// ============================================================
+// Built-in formatter specializations for SYCL types
+// ============================================================
+// Only enabled when <sycl/sycl.hpp> is in play (skips host-only coverage builds
+// which include the header without SYCL).
+
+#if !defined(FMT_SYCL_HOST) && !defined(FMT_SYCL_HOST_ACPP)
+
+namespace sycl {
+namespace ext {
+namespace khx {
+namespace print_detail {
+
+// Build "{}", "{}x{}", "{}x{}x{}", ... with a chosen separator.
+template <int N, char Sep> consteval auto make_sep_fmt() {
+  static_assert(N >= 1, "make_sep_fmt requires N >= 1");
+  // Output size: N copies of "{}" + (N-1) separators + '\0'
+  constexpr size_t Sz = static_cast<size_t>(N) * 2 + (N - 1) + 1;
+  fixed_string<Sz> r{};
+  size_t p = 0;
+  for (int i = 0; i < N; i++) {
+    if (i > 0) r.data[p++] = Sep;
+    r.data[p++] = '{';
+    r.data[p++] = '}';
+  }
+  r.data[p] = '\0';
+  return r;
+}
+
+// Build "({})", "({}, {})", "({}, {}, {})", ...
+template <int N> consteval auto make_id_fmt() {
+  static_assert(N >= 1, "make_id_fmt requires N >= 1");
+  // "(" + N×"{}" + (N-1)×", " + ")" + '\0'
+  constexpr size_t Sz = 1 + static_cast<size_t>(N) * 2 + (N - 1) * 2 + 1 + 1;
+  fixed_string<Sz> r{};
+  size_t p = 0;
+  r.data[p++] = '(';
+  for (int i = 0; i < N; i++) {
+    if (i > 0) { r.data[p++] = ','; r.data[p++] = ' '; }
+    r.data[p++] = '{';
+    r.data[p++] = '}';
+  }
+  r.data[p++] = ')';
+  r.data[p] = '\0';
+  return r;
+}
+
+} // namespace print_detail
+
+// sycl::range<N> -> "AxBxC"
+template <int N>
+struct formatter<::sycl::range<N>> {
+  static constexpr auto format(::sycl::range<N> r) {
+    return [&]<size_t... Is>(std::index_sequence<Is...>) {
+      return formatted<print_detail::make_sep_fmt<N, 'x'>(),
+                       std::decay_t<decltype(r[Is])>...>{ {r[Is]...} };
+    }(std::make_index_sequence<N>{});
+  }
+};
+
+// sycl::id<N> -> "(A, B, C)"
+template <int N>
+struct formatter<::sycl::id<N>> {
+  static constexpr auto format(::sycl::id<N> id) {
+    return [&]<size_t... Is>(std::index_sequence<Is...>) {
+      return formatted<print_detail::make_id_fmt<N>(),
+                       std::decay_t<decltype(id[Is])>...>{ {id[Is]...} };
+    }(std::make_index_sequence<N>{});
+  }
+};
+
+// sycl::item<N> -> "item(global=(...), range=...)" — recursively resolved
+// through the formatters for sycl::id and sycl::range.
+template <int N>
+struct formatter<::sycl::item<N>> {
+  static constexpr auto format(::sycl::item<N> it) {
+    return formatted<print_detail::fixed_string{"item(global={}, range={})"},
+                     ::sycl::id<N>, ::sycl::range<N>>{
+      {it.get_id(), it.get_range()}
+    };
+  }
+};
+
+// sycl::nd_item<N> -> "nd_item(global=..., local=..., range=...)"
+template <int N>
+struct formatter<::sycl::nd_item<N>> {
+  static constexpr auto format(::sycl::nd_item<N> nd) {
+    return formatted<print_detail::fixed_string{"nd_item(global={}, local={}, range={})"},
+                     ::sycl::id<N>, ::sycl::id<N>, ::sycl::range<N>>{
+      {nd.get_global_id(), nd.get_local_id(), nd.get_global_range()}
+    };
+  }
+};
+
+} // namespace khx
+} // namespace ext
+} // namespace sycl
+
+#endif // !FMT_SYCL_HOST && !FMT_SYCL_HOST_ACPP
 
 // Convenience macro — nicer syntax without explicit template angle brackets
 #if FMT_SYCL_ACPP
@@ -2083,3 +2440,11 @@ inline void println(print_detail::print_string<std::type_identity_t<Args>...> ps
 #define KHX_PRINT(fmtstr, ...) ::sycl::ext::khx::print<fmtstr>(__VA_ARGS__)
 #define KHX_PRINTLN(fmtstr, ...) ::sycl::ext::khx::println<fmtstr>(__VA_ARGS__)
 #endif
+
+// Formatter-aware variants — required when any arg has a custom formatter<T>.
+// Always route through the NTTP form so the format string survives as a
+// compile-time constant for the splicer (works on both backends).
+#define KHX_PRINTF(fmtstr, ...)   \
+  ::sycl::ext::khx::print<::sycl::ext::khx::print_detail::fixed_string{fmtstr}>(__VA_ARGS__)
+#define KHX_PRINTLNF(fmtstr, ...) \
+  ::sycl::ext::khx::println<::sycl::ext::khx::print_detail::fixed_string{fmtstr}>(__VA_ARGS__)

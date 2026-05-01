@@ -17,7 +17,7 @@ endif
 
 # ── Source files ────────────────────────────────────────────
 TEST_DIR    := test
-TEST_NAMES  := integers floats strings layout misc
+TEST_NAMES  := integers floats strings layout misc formatter
 ifdef USE_ACPP
   TEST_NAMES += buffer_path escape_percent
 endif
