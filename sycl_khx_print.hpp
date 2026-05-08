@@ -1928,15 +1928,16 @@ inline void format_lit_rt(fmt_buf &out, const char *fmt, int fmt_len, Args... ar
 // for CUDA (vprintf renders %% as %). This breaks CPU SSCP (fputs prints
 // %% literally), but we favor GPU correctness.
 inline void flush_buf(fmt_buf &out, bool escape_pct = true) {
-#ifdef FMT_SYCL_HOST_ACPP
+__acpp_if_target_sscp(
+  sycl::AdaptiveCpp_jit::compile_if_else(
+    sycl::AdaptiveCpp_jit::reflect<sycl::AdaptiveCpp_jit::reflection_query::compiler_backend>() == 
+      sycl::AdaptiveCpp_jit::compiler_backend::host,
+      [&](){
   (void)escape_pct;
   out.data[out.len] = '\0';
   fputs(out.data, stdout);
-#else
-  if (__acpp_sscp_is_host) {
-    out.data[out.len] = '\0';
-    fputs(out.data, stdout);
-  } else {
+  }
+  ,[&](){
     if (escape_pct) {
       int pct = 0;
       for (int i = 0; i < out.len; i++)
@@ -1953,11 +1954,11 @@ inline void flush_buf(fmt_buf &out, bool escape_pct = true) {
     }
     out.data[out.len] = '\0';
     __acpp_sscp_print(out.data);
-  }
-#endif
-}
-
+});
+};
+)
 } // namespace buffer_path
+
 #endif // FMT_SYCL_ACPP
 
 } // namespace print_detail
